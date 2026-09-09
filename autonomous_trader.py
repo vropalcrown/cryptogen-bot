@@ -125,7 +125,7 @@ class AutonomousDemoTrader:
     def get_total_net_worth(self) -> float:
         """Returns liquid cash + refundable ATA rent + market value of open positions."""
         position_value = sum([
-            pos["remaining_tokens"] * pos["entry_price"] * self.sol_to_inr
+            pos.get("invested_inr", 0.0) * (pos.get("curr_price", pos.get("entry_price", 1.0)) / pos.get("entry_price", 1.0)) * (pos.get("remaining_tokens", 1.0) / max(0.000001, pos.get("initial_tokens", 1.0)))
             for pos in self.active_positions.values()
         ])
         return self.portfolio_inr + self.locked_ata_rent_inr + position_value
@@ -413,7 +413,7 @@ class AutonomousDemoTrader:
 
             invested_total = sum(pos.get("invested_inr", 0.0) for pos in self.active_positions.values())
             floating_pnl_inr = sum(
-                (pos.get("remaining_tokens", 0.0) * pos.get("curr_price", pos["entry_price"]) * self.sol_to_inr) - pos.get("invested_inr", 0.0)
+                (pos.get("invested_inr", 0.0) * (pos.get("curr_price", pos["entry_price"]) / max(1e-12, pos["entry_price"])) * (pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0)))) - pos.get("invested_inr", 0.0)
                 for pos in self.active_positions.values()
             )
 
@@ -508,8 +508,8 @@ class AutonomousDemoTrader:
                 print(f"🔒 Closing {len(self.active_positions)} active position(s) to lock cycle profit...")
                 for addr, pos in list(self.active_positions.items()):
                     await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
-                    self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
-                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * self.sol_to_inr) + pos["ata_locked_inr"]
+                    recovered = pos["invested_inr"] * (pos.get("curr_price", pos["entry_price"]) / max(1e-12, pos["entry_price"])) * (pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0)))
+                    self.portfolio_inr += recovered + pos["ata_locked_inr"]
                 self.active_positions.clear()
                 self.locked_ata_rent_inr = 0.0
 
@@ -1130,7 +1130,9 @@ class AutonomousDemoTrader:
 
             # === Check Stop Loss (Trailing or Hard) ===
             if curr_price <= pos["stop_loss_price"]:
-                gross_recovered = (pos["remaining_tokens"] * curr_price) * self.sol_to_inr
+                remaining_ratio = pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0))
+                price_ratio = curr_price / max(1e-12, pos["entry_price"])
+                gross_recovered = pos["invested_inr"] * remaining_ratio * price_ratio
                 sell_fee = round(0.50 + (gross_recovered * 0.003), 2)
                 self.total_fees_paid_inr += sell_fee
                 net_recovered = max(0.0, gross_recovered - sell_fee)
@@ -1214,7 +1216,9 @@ class AutonomousDemoTrader:
                 if not stage["hit"] and curr_price >= stage["price"]:
                     tokens_to_sell = pos["initial_tokens"] * stage["ratio"]
                     tokens_to_sell = min(tokens_to_sell, pos["remaining_tokens"])
-                    gross_proceeds = (tokens_to_sell * curr_price) * self.sol_to_inr
+                    sold_ratio = tokens_to_sell / max(1e-6, pos["initial_tokens"])
+                    price_ratio = curr_price / max(1e-12, pos["entry_price"])
+                    gross_proceeds = pos["invested_inr"] * sold_ratio * price_ratio
                     sell_fee = round(0.50 + (gross_proceeds * 0.003), 2)
                     self.total_fees_paid_inr += sell_fee
                     net_proceeds = max(0.0, gross_proceeds - sell_fee)
