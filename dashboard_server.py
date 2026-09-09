@@ -43,6 +43,8 @@ DASHBOARD_HTML = """
       --card-border: rgba(255, 255, 255, 0.08);
       --accent-sol: #9945FF;
       --accent-cyan: #14F195;
+      --accent-blue: #3B82F6;
+      --accent-purple: #8B5CF6;
       --text-main: #F3F4F6;
       --text-muted: #9CA3AF;
       --win-green: #10B981;
@@ -96,41 +98,42 @@ DASHBOARD_HTML = """
     }
     @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
 
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 22px; }
     .card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: 16px;
-      padding: 20px;
+      padding: 18px 20px;
       backdrop-filter: blur(16px);
-      transition: transform 0.2s ease, border-color 0.2s ease;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     }
-    .card:hover { border-color: rgba(255, 255, 255, 0.16); transform: translateY(-2px); }
+    .card:hover { border-color: rgba(255, 255, 255, 0.16); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
 
-    .card-title { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; margin-bottom: 8px; }
+    .card-title { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 600; margin-bottom: 8px; }
     .card-value { font-size: 26px; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
     .card-meta { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
 
     .progress-wrap { width: 100%; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; margin-top: 10px; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent-sol), var(--accent-cyan)); border-radius: 4px; transition: width 0.5s ease; }
 
-    .dashboard-body { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
-    @media (max-width: 900px) { .dashboard-body { grid-template-columns: 1fr; } }
+    .dashboard-body { display: grid; grid-template-columns: 1.45fr 1fr; gap: 22px; margin-bottom: 22px; }
+    @media (max-width: 960px) { .dashboard-body { grid-template-columns: 1fr; } }
 
     .panel {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: 16px;
-      padding: 24px;
+      padding: 22px;
       backdrop-filter: blur(16px);
-      margin-bottom: 24px;
+      margin-bottom: 22px;
     }
-    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
-    .panel-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+    .panel-title { font-size: 15.5px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 
-    table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
-    th { text-align: left; padding: 12px 14px; color: var(--text-muted); font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--card-border); }
-    td { padding: 14px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
+    th { text-align: left; padding: 10px 14px; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--card-border); white-space: nowrap; }
+    td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); white-space: nowrap; vertical-align: middle; }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
     tr:last-child td { border-bottom: none; }
 
     .tag {
@@ -182,7 +185,18 @@ DASHBOARD_HTML = """
     .terminal-body::-webkit-scrollbar-thumb { background: rgba(20, 241, 149, 0.25); border-radius: 3px; }
     .terminal-body::-webkit-scrollbar-thumb:hover { background: var(--accent-cyan); }
     .terminal-footer {
-      background: #080C14; padding: 8px 16px; border-top: 1px solid rgba(255, 255, 255, 0.05);
+      background: #080C14;
+      padding: 8px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .blink-cursor { animation: blink 1s step-start infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
     .btn-chart {
       background: rgba(20, 241, 149, 0.12);
       color: var(--accent-cyan);
@@ -332,25 +346,27 @@ DASHBOARD_HTML = """
             <button class="btn btn-danger" onclick="triggerControl('/closeall')">Emergency Close All</button>
           </div>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Token</th>
-              <th>Invested</th>
-              <th>Current Price</th>
-              <th>Trailing Stop</th>
-              <th>PnL</th>
-              <th>Live Chart</th>
-            </tr>
-          </thead>
-          <tbody id="positions-table">
-            <tr>
-              <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">
-                Scanning live Solana DEX pairs... (No open positions)
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+          <table>
+            <thead>
+              <tr>
+                <th>Token</th>
+                <th>Invested</th>
+                <th>Current Price</th>
+                <th>Trailing Stop</th>
+                <th>PnL</th>
+                <th>Live Chart</th>
+              </tr>
+            </thead>
+            <tbody id="positions-table">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 32px;">
+                  Scanning live Solana DEX pairs... (No open positions)
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Intelligence & Alpha Radar -->
@@ -402,6 +418,7 @@ DASHBOARD_HTML = """
           </div>
         </div>
       </div>
+    </div> <!-- Close .dashboard-body grid properly -->
     <!-- Dedicated Transaction & Profit/Loss Ledger Panel -->
     <div class="panel">
       <div class="panel-header">
@@ -416,7 +433,7 @@ DASHBOARD_HTML = """
         </div>
       </div>
 
-      <div style="max-height: 380px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
+      <div style="max-height: 380px; overflow-y: auto; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
         <table>
           <thead>
             <tr>
@@ -462,7 +479,7 @@ DASHBOARD_HTML = """
             <span>🛡️ Resolved Outcomes (<span id="resolved-count">0</span>)</span>
             <span style="font-size: 11px; color: var(--text-muted);">Reinforcement Learning Logs</span>
           </div>
-          <div style="max-height: 290px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
+          <div style="max-height: 290px; overflow-y: auto; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
             <table>
               <thead>
                 <tr>
@@ -486,7 +503,7 @@ DASHBOARD_HTML = """
             <span>⏳ In-Flight Watchlist (<span id="active-shadow-count">0</span>)</span>
             <span style="font-size: 11px; color: var(--text-muted);">2-Hour Post-Rejection Decay</span>
           </div>
-          <div style="max-height: 290px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
+          <div style="max-height: 290px; overflow-y: auto; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
             <table>
               <thead>
                 <tr>
