@@ -291,9 +291,10 @@ DASHBOARD_HTML = """
           const pub = data.burner_wallet ? `${data.burner_wallet.slice(0, 6)}...${data.burner_wallet.slice(-6)}` : 'C41pja...QZQZjF';
           const mode = data.is_live ? 'LIVE ON-CHAIN' : 'PAPER SIMULATION';
           const solBal = Number(data.live_sol_balance || 0).toFixed(4);
+          const solRate = data.sol_to_inr ? ` • 1 SOL = ₹${Number(data.sol_to_inr).toLocaleString('en-IN')}` : '';
           const walletSubEl = document.getElementById('wallet-sub');
           if (walletSubEl) {
-            walletSubEl.innerText = `Burner: ${pub} (${solBal} SOL) • ${mode}`;
+            walletSubEl.innerText = `Burner: ${pub} (${solBal} SOL) • ${mode}${solRate}`;
           }
           const botStatusEl = document.getElementById('bot-status');
           if (botStatusEl) {

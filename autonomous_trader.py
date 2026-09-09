@@ -70,6 +70,7 @@ class AutonomousDemoTrader:
         self.live_sol_balance = onchain_bal.get("sol", 0.0)
 
         self.portfolio_inr = STARTING_BALANCE_INR
+        self.sol_to_inr = SOL_TO_INR_ESTIMATE
         self.locked_ata_rent_inr = 0.0
         self.active_positions = {}
         self.trade_history = []
@@ -117,7 +118,7 @@ class AutonomousDemoTrader:
     def get_total_net_worth(self) -> float:
         """Returns liquid cash + refundable ATA rent + market value of open positions."""
         position_value = sum([
-            pos["remaining_tokens"] * pos["entry_price"] * SOL_TO_INR_ESTIMATE
+            pos["remaining_tokens"] * pos["entry_price"] * self.sol_to_inr
             for pos in self.active_positions.values()
         ])
         return self.portfolio_inr + self.locked_ata_rent_inr + position_value
@@ -317,6 +318,7 @@ class AutonomousDemoTrader:
                 "activity_feed": getattr(self, "activity_log", []),
                 "burner_wallet": self.executor.wallet_pubkey or "",
                 "live_sol_balance": round(getattr(self, "live_sol_balance", 0.0), 4),
+                "sol_to_inr": round(getattr(self, "sol_to_inr", 13000.0), 2),
                 "is_live": getattr(self, "is_live", False)
             }
 
@@ -381,7 +383,7 @@ class AutonomousDemoTrader:
                 for addr, pos in list(self.active_positions.items()):
                     await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
                     self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
-                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * SOL_TO_INR_ESTIMATE) + pos["ata_locked_inr"]
+                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * self.sol_to_inr) + pos["ata_locked_inr"]
                 self.active_positions.clear()
                 self.locked_ata_rent_inr = 0.0
 
@@ -407,7 +409,7 @@ class AutonomousDemoTrader:
             else:
                 next_info = "Ultimate ladder cycle completed! Bot awaiting creator instructions."
 
-            sol_harvest = profit_sweep / SOL_TO_INR_ESTIMATE
+            sol_harvest = profit_sweep / self.sol_to_inr
             dest_msg = f"Sent to {PERSONAL_WITHDRAWAL_WALLET[:8]}..." if PERSONAL_WITHDRAWAL_WALLET else "Locked in cold reserve"
 
             # Save state immediately after cycle progression
@@ -458,6 +460,7 @@ class AutonomousDemoTrader:
                     f"• *Cycle:* #{stage['cycle']} (Danger Floor: INR {stage['danger_floor_inr']:.0f})\n"
                     f"• *Survival Tier:* {st.emoji} {st.tier}\n"
                     f"• *Market Regime:* {regime}\n"
+                    f"• *SOL/INR Rate:* ₹{self.sol_to_inr:,.0f}\n"
                     f"• *News Sentiment:* {nr.get('sentiment_label', 'NEUTRAL')}\n"
                     f"• *Win Rate:* {self.wins}W / {self.losses}L\n\n"
                     f"💼 *Open Positions:*\n{pos_summary}"
@@ -484,7 +487,7 @@ class AutonomousDemoTrader:
                 for addr, pos in list(self.active_positions.items()):
                     await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
                     self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
-                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * SOL_TO_INR_ESTIMATE) + pos["ata_locked_inr"]
+                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * self.sol_to_inr) + pos["ata_locked_inr"]
                 self.active_positions.clear()
                 self.locked_ata_rent_inr = 0.0
                 self.save_state()
@@ -637,6 +640,9 @@ class AutonomousDemoTrader:
         # 1. Macro Context Check
         macro = await fetch_sol_macro_context()
         self.last_macro_change = macro.get('sol_6h_change_pct', 0.0)
+        sol_usd = macro.get('sol_price_usd', 0.0)
+        if sol_usd > 10.0:
+            self.sol_to_inr = round(sol_usd * 86.5, 2)
 
         # Enhanced macro sensitivity from journal
         macro_threshold = -4.5
@@ -647,7 +653,7 @@ class AutonomousDemoTrader:
             print(f"   [MACRO HALT] SOL dumped {macro['sol_6h_change_pct']}%. Pausing buys.")
             return
 
-        print(f"\n   [MACRO] SOL: ${macro['sol_price_usd']:.2f} ({macro['macro_trend']}) | {macro['sol_6h_change_pct']:+0.1f}%")
+        print(f"\n   [MACRO] SOL: ${sol_usd:.2f} (₹{self.sol_to_inr:,.0f}) | {macro['macro_trend']} | {macro['sol_6h_change_pct']:+0.1f}%")
 
         # Get adaptive threshold from brain + regime + survival tier
         regime_threshold = self.current_regime.get("ml_threshold", 0.65)
@@ -697,7 +703,7 @@ class AutonomousDemoTrader:
                 continue
 
             # Filter 3: AMM Price Impact
-            trade_sol = 20.0 / SOL_TO_INR_ESTIMATE
+            trade_sol = 20.0 / self.sol_to_inr
             pool_sol = liq / 140.0
             price_impact = calculate_amm_price_impact(trade_sol, pool_sol)
             if price_impact > 0.03:
@@ -748,7 +754,7 @@ class AutonomousDemoTrader:
             self.portfolio_inr -= (size_inr + ata_locked)
 
             # Execute On-Chain Swap
-            lamports_to_invest = int((size_inr / SOL_TO_INR_ESTIMATE) * 1_000_000_000)
+            lamports_to_invest = int((size_inr / self.sol_to_inr) * 1_000_000_000)
             swap_res = await self.executor.execute_swap(
                 input_mint=SOL_MINT,
                 output_mint=addr,
@@ -762,7 +768,7 @@ class AutonomousDemoTrader:
                 continue
 
             self.trade_counter += 1
-            tokens_bought = (size_inr / SOL_TO_INR_ESTIMATE) / price
+            tokens_bought = (size_inr / self.sol_to_inr) / price
 
             self.active_positions[addr] = {
                 "trade_number": self.trade_counter,
@@ -844,7 +850,7 @@ class AutonomousDemoTrader:
 
             # === Check Stop Loss (Trailing or Hard) ===
             if curr_price <= pos["stop_loss_price"]:
-                recovered_inr = (pos["remaining_tokens"] * curr_price) * SOL_TO_INR_ESTIMATE
+                recovered_inr = (pos["remaining_tokens"] * curr_price) * self.sol_to_inr
                 await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
                 self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
                 refund_ata = pos["ata_locked_inr"]
@@ -900,7 +906,7 @@ class AutonomousDemoTrader:
                 if not stage["hit"] and curr_price >= stage["price"]:
                     tokens_to_sell = pos["initial_tokens"] * stage["ratio"]
                     tokens_to_sell = min(tokens_to_sell, pos["remaining_tokens"])
-                    proceeds = (tokens_to_sell * curr_price) * SOL_TO_INR_ESTIMATE
+                    proceeds = (tokens_to_sell * curr_price) * self.sol_to_inr
                     await self.executor.execute_swap(addr, SOL_MINT, int(tokens_to_sell * 1_000_000), paper_mode=(not self.is_live))
                     self.portfolio_inr += proceeds
                     pos["remaining_tokens"] -= tokens_to_sell
