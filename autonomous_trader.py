@@ -32,6 +32,7 @@ from telegram_notifier import send_telegram_alert
 from trade_journal import TradeJournal
 from market_regime import MarketRegimeDetector
 from meta_tracker import MetaTracker
+from survival_engine import evaluate_survival_tier
 
 
 class AutonomousDemoTrader:
@@ -100,17 +101,21 @@ class AutonomousDemoTrader:
         return self.portfolio_inr + self.locked_ata_rent_inr + position_value
 
     def calculate_kelly_position_size(self, win_probability: float) -> float:
-        """Kelly sizing adjusted by market regime multiplier."""
+        """Kelly sizing adjusted by survival tier and market regime multiplier."""
         tradeable_cash = max(0.0, self.portfolio_inr - EMERGENCY_RESERVE_INR)
         if tradeable_cash < 5.0:
             return 0.0
+
+        # Survival Tier Cap (halves risk in DEFENSE mode)
+        tier_cfg = evaluate_survival_tier(self.get_total_net_worth())
+        max_cap = tier_cfg.max_position_pct
 
         kelly_size = calculate_fractional_kelly_size(
             win_probability=win_probability,
             portfolio_inr=self.portfolio_inr,
             reward_to_risk_ratio=3.33,
             fraction=0.25,
-            max_cap_pct=0.20
+            max_cap_pct=max_cap
         )
 
         # Apply regime multiplier (bull = bigger, bear = smaller)
@@ -122,28 +127,34 @@ class AutonomousDemoTrader:
     async def update_intelligence(self):
         """
         Runs before each trading scan:
-          1. Detects market regime (bull/bear/crab/crash)
-          2. Scans trending token meta (which narratives are hot)
-          3. Loads failure pattern weights from journal
+          1. Evaluates Capital Survival Tier (Automaton policy)
+          2. Detects market regime (bull/bear/crab/crash)
+          3. Scans trending token meta (which narratives are hot)
+          4. Loads failure pattern weights from journal
         """
         print("\n--- INTELLIGENCE UPDATE ---")
 
-        # 1. Market Regime Detection
+        # 1. Capital Survival Tier
+        self.survival_tier = evaluate_survival_tier(self.get_total_net_worth())
+        st = self.survival_tier
+        print(f"   {st.emoji} Survival Tier: {st.tier} — {st.description}")
+
+        # 2. Market Regime Detection
         self.current_regime = await self.regime_detector.detect_regime()
         regime = self.current_regime
         print(f"   {regime.get('emoji', '')} Market Regime: {regime['regime']} "
               f"(Confidence: {regime.get('confidence', 0)*100:.0f}%) — {regime.get('description', '')}")
 
-        # 2. Meta Tracker (less frequent — every 10 min)
+        # 3. Meta Tracker (every cycle, cached)
         meta = await self.meta_tracker.scan_trending_meta()
         if self.meta_tracker.hot_categories:
             top3 = self.meta_tracker.hot_categories[:3]
             print(f"   Hot Meta: {' > '.join(top3)}")
 
-        # 3. Journal Insights
+        # 4. Journal Insights
         self.journal_weights = self.journal.get_failure_pattern_weights()
 
-        # 4. Brain Status
+        # 5. Brain Status
         print(f"   {self.brain.get_brain_status()}")
         print("---")
 
@@ -175,10 +186,12 @@ class AutonomousDemoTrader:
 
         print(f"\n   [MACRO] SOL: ${macro['sol_price_usd']:.2f} ({macro['macro_trend']}) | {macro['sol_6h_change_pct']:+0.1f}%")
 
-        # Get adaptive threshold from brain + regime
+        # Get adaptive threshold from brain + regime + survival tier
         regime_threshold = self.current_regime.get("ml_threshold", 0.65)
-        entry_threshold = self.brain.get_adaptive_threshold(regime_threshold)
-        print(f"   [THRESHOLD] Entry bar: {entry_threshold*100:.0f}% (Regime: {regime_threshold*100:.0f}%, Brain: {self.brain.adaptive_threshold*100:.0f}%)")
+        survival_min_conf = getattr(self, "survival_tier", None).min_confidence if hasattr(self, "survival_tier") else 0.70
+        entry_threshold = max(self.brain.get_adaptive_threshold(regime_threshold), survival_min_conf)
+        min_pool_liq = self.survival_tier.min_liquidity_usd if hasattr(self, "survival_tier") else 5000.0
+        print(f"   [THRESHOLD] Entry bar: {entry_threshold*100:.0f}% (Regime: {regime_threshold*100:.0f}%, Survival: {survival_min_conf*100:.0f}%, Min Liq: ${min_pool_liq:,.0f})")
 
         for addr in candidate_addresses:
             if addr in self.active_positions:
@@ -194,6 +207,11 @@ class AutonomousDemoTrader:
             symbol = live_data["symbol"]
             price = live_data["price_usd"]
             liq = live_data["liquidity_usd"]
+
+            # Filter 0: Survival Tier Pool Liquidity Check
+            if liq < min_pool_liq:
+                print(f"   [SURVIVAL LIQ] {symbol}: Pool ${liq:,.0f} < ${min_pool_liq:,.0f} tier floor. Skipped.")
+                continue
 
             # Filter 1: Basic Safety (RugCheck / DexScreener)
             safety = await analyze_token_safety(addr, live_data)
@@ -437,6 +455,7 @@ class AutonomousDemoTrader:
 
         regime = self.current_regime.get("regime", "UNKNOWN")
         regime_emoji = self.current_regime.get("emoji", "")
+        st = getattr(self, "survival_tier", evaluate_survival_tier(total_nw))
 
         print("\n" + "-" * 60)
         print(f" PORTFOLIO: INR{total_nw:.2f} / INR{TARGET_BALANCE_INR:.2f}")
@@ -444,6 +463,7 @@ class AutonomousDemoTrader:
         print(f"   ATA Locked     : INR{self.locked_ata_rent_inr:.2f} (Refundable)")
         print(f"   Open Positions : {len(self.active_positions)}")
         print(f"   Win Rate       : {win_rate:.1f}% ({self.wins}W / {self.losses}L)")
+        print(f"   Survival Tier  : {st.emoji} {st.tier} (Floor: ${st.min_liquidity_usd:,.0f})")
         print(f"   Market Regime  : {regime_emoji} {regime}")
         print(f"   Brain Accuracy : {self.brain.recent_accuracy*100:.0f}% | Threshold: {self.brain.adaptive_threshold*100:.0f}%")
         bar_len = int(progress // 5)
