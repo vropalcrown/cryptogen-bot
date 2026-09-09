@@ -172,6 +172,7 @@ DASHBOARD_HTML = """
       <div class="card">
         <div class="card-title">Portfolio Net Worth</div>
         <div class="card-value" id="net-worth" style="color: var(--accent-cyan);">INR 100.00</div>
+        <div class="card-meta" id="daily-pnl" style="color: var(--win-green); font-weight: 600;">24h: +INR 0.00 (+0.0%)</div>
         <div class="card-meta" id="cycle-target">Cycle #1 Goal: INR 1,000.00</div>
         <div class="progress-wrap">
           <div class="progress-fill" id="progress-bar" style="width: 10%;"></div>
@@ -264,6 +265,13 @@ DASHBOARD_HTML = """
         if (res.ok) {
           const data = await res.json();
           document.getElementById('net-worth').innerText = `INR ${Number(data.net_worth || 100).toFixed(2)}`;
+          const dpnl = Number(data.daily_pnl || 0);
+          const dpnlPct = Number(data.daily_pnl_pct || 0);
+          const dpnlEl = document.getElementById('daily-pnl');
+          if (dpnlEl) {
+            dpnlEl.style.color = dpnl >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
+            dpnlEl.innerText = `24h: ${dpnl >= 0 ? '+' : ''}INR ${dpnl.toFixed(2)} (${dpnl >= 0 ? '+' : ''}${dpnlPct.toFixed(1)}%)`;
+          }
           document.getElementById('cycle-target').innerText = `Cycle #${data.cycle || 1} Goal: INR ${Number(data.target_inr || 1000).toLocaleString()}`;
           document.getElementById('cycle-badge').innerText = `Cycle #${data.cycle || 1}`;
           document.getElementById('danger-floor').innerText = `Danger Floor: INR ${Number(data.danger_floor_inr || 50).toFixed(2)}`;

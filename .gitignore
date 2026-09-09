@@ -14,3 +14,8 @@ venv/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Runtime State & Cache
+*.tmp
+live_state.json
+bot_state.json

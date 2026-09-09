@@ -38,6 +38,8 @@ from news_sentinel import NewsSentinel
 from whale_tracker import WhaleTracker
 from arbitrage_engine import ArbitrageEngine
 
+BOT_STATE_FILE = os.path.join(os.path.dirname(__file__), "bot_state.json")
+
 
 class AutonomousDemoTrader:
     def __init__(self):
@@ -80,6 +82,11 @@ class AutonomousDemoTrader:
         self.current_cycle_idx = 0  # Starts at Cycle 1 (index 0)
         self.is_danger_halted = False
         self.is_paused = False  # Controlled via Telegram /pause and /resume
+        self.daily_start_nw = STARTING_BALANCE_INR
+        self.last_daily_scorecard = time.time()
+
+        # Restore persistent state across container restarts
+        self.load_state()
 
         # Track last known macro state for journal
         self.last_macro_change = 0.0
@@ -116,14 +123,135 @@ class AutonomousDemoTrader:
         idx = min(self.current_cycle_idx, len(COMPOUNDING_LADDER) - 1)
         return COMPOUNDING_LADDER[idx]
 
+    def load_state(self):
+        """Loads persistent portfolio, cycle, and positions state if available across container restarts."""
+        if os.path.exists(BOT_STATE_FILE):
+            try:
+                with open(BOT_STATE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.portfolio_inr = float(data.get("portfolio_inr", self.portfolio_inr))
+                self.locked_ata_rent_inr = float(data.get("locked_ata_rent_inr", 0.0))
+                self.active_positions = data.get("active_positions", {})
+                self.wins = int(data.get("wins", 0))
+                self.losses = int(data.get("losses", 0))
+                self.trade_counter = int(data.get("trade_counter", 0))
+                self.current_cycle_idx = int(data.get("current_cycle_idx", 0))
+                self.is_danger_halted = bool(data.get("is_danger_halted", False))
+                self.is_paused = bool(data.get("is_paused", False))
+                self.session_start = float(data.get("session_start", self.session_start))
+                self.daily_start_nw = float(data.get("daily_start_nw", self.get_total_net_worth()))
+                self.last_daily_scorecard = float(data.get("last_daily_scorecard", time.time()))
+                print(f"📦 [STATE RESTORED] Loaded persistent state from {os.path.basename(BOT_STATE_FILE)}:")
+                print(f"   Net Worth: INR {self.get_total_net_worth():.2f} | Positions: {len(self.active_positions)} | Record: {self.wins}W / {self.losses}L | Cycle #{self.current_cycle_idx + 1}")
+            except Exception as e:
+                print(f"⚠️ [STATE RESTORE NOTICE] Starting fresh: {e}")
+
+    def save_state(self):
+        """Atomically saves bot state snapshot to disk to survive container restarts."""
+        try:
+            data = {
+                "portfolio_inr": round(self.portfolio_inr, 2),
+                "locked_ata_rent_inr": round(self.locked_ata_rent_inr, 2),
+                "active_positions": self.active_positions,
+                "wins": self.wins,
+                "losses": self.losses,
+                "trade_counter": self.trade_counter,
+                "current_cycle_idx": self.current_cycle_idx,
+                "is_danger_halted": self.is_danger_halted,
+                "is_paused": self.is_paused,
+                "session_start": self.session_start,
+                "daily_start_nw": round(getattr(self, "daily_start_nw", self.get_total_net_worth()), 2),
+                "last_daily_scorecard": getattr(self, "last_daily_scorecard", time.time()),
+                "last_saved_at": time.time()
+            }
+            tmp_file = BOT_STATE_FILE + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_file, BOT_STATE_FILE)
+        except Exception as e:
+            print(f"⚠️ [STATE SAVE ERROR] {e}")
+
+    async def send_daily_scorecard(self, manual: bool = False):
+        """
+        Sends a comprehensive 24-hour Daily PnL Scorecard to Telegram.
+        """
+        total_nw = self.get_total_net_worth()
+        stage = self.get_current_ladder_stage()
+        start_nw = getattr(self, "daily_start_nw", STARTING_BALANCE_INR)
+        daily_pnl = total_nw - start_nw
+        daily_pnl_pct = (daily_pnl / start_nw * 100) if start_nw > 0 else 0.0
+
+        all_time_pnl = total_nw - STARTING_BALANCE_INR
+        all_time_pnl_pct = (all_time_pnl / STARTING_BALANCE_INR * 100)
+
+        total_trades = self.wins + self.losses
+        win_rate = (self.wins / total_trades * 100) if total_trades > 0 else 0.0
+
+        uptime_secs = time.time() - self.session_start
+        days = int(uptime_secs // 86400)
+        hours = int((uptime_secs % 86400) // 3600)
+        mins = int((uptime_secs % 3600) // 60)
+        uptime_str = f"{days}d {hours}h {mins}m"
+
+        st = getattr(self, "survival_tier", evaluate_survival_tier(total_nw))
+        regime = self.current_regime.get("regime", "UNKNOWN")
+        regime_emoji = self.current_regime.get("emoji", "🌊")
+
+        # Journal failure distribution
+        journal_stats = ""
+        if hasattr(self.journal, "failure_counts") and self.journal.failure_counts:
+            items = [f"{k}: {v}" for k, v in self.journal.failure_counts.items() if v > 0]
+            if items:
+                journal_stats = "\n• *Trade Patterns:* " + ", ".join(items)
+
+        header_prefix = "📋 *[ON-DEMAND SCORECARD]*" if manual else "📅 🏆 *[24-HOUR DAILY SCORECARD]* 🏆"
+        pnl_sign = "+" if daily_pnl >= 0 else ""
+        all_pnl_sign = "+" if all_time_pnl >= 0 else ""
+
+        progress = min(100.0, (total_nw / stage["target_inr"]) * 100)
+
+        message = (
+            f"{header_prefix}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 *Net Worth:* INR {total_nw:.2f}\n"
+            f"📈 *24h Daily PnL:* {pnl_sign}INR {daily_pnl:.2f} ({daily_pnl_pct:+.1f}%)\n"
+            f"🚀 *All-Time Gain:* {all_pnl_sign}INR {all_time_pnl:.2f} ({all_time_pnl_pct:+.1f}%)\n"
+            f"🎯 *Compounding:* Cycle #{stage['cycle']} ({progress:.1f}% to INR {stage['target_inr']:,.0f})\n"
+            f"🛡️ *Danger Floor:* INR {stage['danger_floor_inr']:.0f}\n"
+            f"🥊 *Record:* {self.wins}W / {self.losses}L (Win Rate: {win_rate:.1f}%)\n"
+            f"💼 *Open Positions:* {len(self.active_positions)}\n"
+            f"🌊 *Market Regime:* {regime_emoji} {regime}\n"
+            f"🛡️ *Survival Tier:* {st.emoji} {st.tier}\n"
+            f"🧠 *Brain Accuracy:* {self.brain.recent_accuracy*100:.0f}% (Threshold: {self.brain.adaptive_threshold*100:.0f}%)\n"
+            f"⏳ *Incubation Uptime:* {uptime_str}"
+            f"{journal_stats}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 *Status:* Autonomous 24/7 Cloud Incubation Active."
+        )
+
+        await send_telegram_alert(message)
+        print("\n" + "📊" * 35)
+        print(f" [DAILY SCORECARD SENT TO TELEGRAM] Net Worth: INR {total_nw:.2f} | 24h PnL: {daily_pnl_pct:+.1f}%")
+        print("📊" * 35 + "\n")
+
+        # Reset daily baseline for next 24h cycle
+        if not manual:
+            self.daily_start_nw = total_nw
+            self.last_daily_scorecard = time.time()
+            self.save_state()
+
     def dump_live_state(self):
         """Dumps real-time telemetry to live_state.json for the web dashboard."""
         try:
             stage = self.get_current_ladder_stage()
-            st = getattr(self, "survival_tier", evaluate_survival_tier(self.get_total_net_worth()))
+            total_nw = self.get_total_net_worth()
+            st = getattr(self, "survival_tier", evaluate_survival_tier(total_nw))
             regime = self.current_regime.get("regime", "UNKNOWN")
             regime_emoji = self.current_regime.get("emoji", "")
             nr = getattr(self, "news_report", {})
+            start_nw = getattr(self, "daily_start_nw", STARTING_BALANCE_INR)
+            daily_pnl = total_nw - start_nw
+            daily_pnl_pct = (daily_pnl / start_nw * 100) if start_nw > 0 else 0.0
 
             positions_list = []
             for addr, pos in self.active_positions.items():
@@ -139,7 +267,7 @@ class AutonomousDemoTrader:
                 })
 
             state = {
-                "net_worth": round(self.get_total_net_worth(), 2),
+                "net_worth": round(total_nw, 2),
                 "liquid_cash": round(self.portfolio_inr, 2),
                 "cycle": stage["cycle"],
                 "target_inr": stage["target_inr"],
@@ -150,7 +278,10 @@ class AutonomousDemoTrader:
                 "wins": self.wins,
                 "losses": self.losses,
                 "positions": positions_list,
-                "updated_at": time.time()
+                "updated_at": time.time(),
+                "daily_pnl": round(daily_pnl, 2),
+                "daily_pnl_pct": round(daily_pnl_pct, 2),
+                "is_paused": self.is_paused
             }
 
             state_file = os.path.join(os.path.dirname(__file__), "live_state.json")
@@ -171,6 +302,7 @@ class AutonomousDemoTrader:
 
         if total_nw <= danger_floor and not self.is_danger_halted:
             self.is_danger_halted = True
+            self.save_state()
             print("\n" + "🚨" * 35)
             print(f"🛑 [DANGER FLOOR BREACHED] Net worth INR {total_nw:.2f} <= Danger Floor INR {danger_floor:.2f}!")
             print(f"   Trading HALTED to protect remaining capital in Cycle #{stage['cycle']}.")
@@ -242,6 +374,9 @@ class AutonomousDemoTrader:
             sol_harvest = profit_sweep / SOL_TO_INR_ESTIMATE
             dest_msg = f"Sent to {PERSONAL_WITHDRAWAL_WALLET[:8]}..." if PERSONAL_WITHDRAWAL_WALLET else "Locked in cold reserve"
 
+            # Save state immediately after cycle progression
+            self.save_state()
+
             print(f"\n💰 [CYCLE #{cycle_num} HARVEST SUMMARY]")
             print(f"   • Profit Secured & Locked Away : INR {profit_sweep:.2f} (~{sol_harvest:.4f} SOL)")
             print(f"   • Re-Seed Working Balance      : INR {reseed_capital:.2f}")
@@ -292,13 +427,18 @@ class AutonomousDemoTrader:
                     f"💼 *Open Positions:*\n{pos_summary}"
                 )
 
+            elif cmd == "/scorecard":
+                await self.send_daily_scorecard(manual=True)
+
             elif cmd == "/pause":
                 self.is_paused = True
+                self.save_state()
                 print("   ⏸️ [BOT PAUSED] New token buying suspended by user.")
                 await send_telegram_alert("⏸️ *[BOT PAUSED]* Autonomous buying suspended. Active positions will still be monitored for TP/SL.")
 
             elif cmd == "/resume":
                 self.is_paused = False
+                self.save_state()
                 print("   ▶️ [BOT RESUMED] Autonomous buying active.")
                 await send_telegram_alert("▶️ *[BOT RESUMED]* Autonomous market scans and buying resumed!")
 
@@ -311,6 +451,7 @@ class AutonomousDemoTrader:
                     self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * SOL_TO_INR_ESTIMATE) + pos["ata_locked_inr"]
                 self.active_positions.clear()
                 self.locked_ata_rent_inr = 0.0
+                self.save_state()
                 await send_telegram_alert(f"🚨 *[EMERGENCY CLOSE ALL]* Closed {closed_count} position(s). All capital converted to cash/SOL + ATA rent reclaimed!")
 
             elif cmd == "/harvest":
@@ -320,6 +461,7 @@ class AutonomousDemoTrader:
                 await send_telegram_alert(
                     "🤖 *CryptoGen Remote Commands:*\n\n"
                     "• `/status` - Live portfolio, open trades & regime\n"
+                    "• `/scorecard` - Instant 24h Daily PnL scorecard\n"
                     "• `/pause` - Pause autonomous buying\n"
                     "• `/resume` - Resume autonomous buying\n"
                     "• `/closeall` - Emergency close all positions to SOL\n"
@@ -582,6 +724,7 @@ class AutonomousDemoTrader:
             }
 
             regime_tag = self.current_regime.get("regime", "?")
+            self.save_state()
             print(f"   [BUY FILLED] {symbol} | Invested: INR{size_inr:.2f} | ATA Rent: INR{ata_locked:.2f} | Regime: {regime_tag}")
             print(f"   TX: {swap_res.get('tx_hash')[:32]}...")
             print(f"   Stop Loss: ${price * (1.0 - STOP_LOSS_PERCENT):.8f} (-30%)")
@@ -698,6 +841,7 @@ class AutonomousDemoTrader:
                     pos["remaining_tokens"] -= tokens_to_sell
                     stage["hit"] = True
                     pos["tp_stages_hit"] = pos.get("tp_stages_hit", 0) + 1
+                    self.save_state()
                     print(f"   [TP {stage['mult']}x HIT] Sold {stage['ratio']*100:.0f}% of {pos['token']}. Locked: +INR{proceeds:.2f}")
                     await send_telegram_alert(
                         f"*[TAKE PROFIT {stage['mult']}x]* {pos['token']}\n"
@@ -739,6 +883,9 @@ class AutonomousDemoTrader:
         for addr in closed_addrs:
             del self.active_positions[addr]
 
+        if closed_addrs:
+            self.save_state()
+
     def display_dashboard(self):
         total_nw = self.get_total_net_worth()
         total_trades = self.wins + self.losses
@@ -779,8 +926,9 @@ class AutonomousDemoTrader:
             if regime_wr:
                 regime_str = " | ".join(f"{r}: {wr:.0f}%" for r, wr in regime_wr.items())
                 print(f"   Win Rate/Regime: {regime_str}")
-        # Sync real-time state with web dashboard
+        # Sync real-time state with web dashboard & disk snapshot
         self.dump_live_state()
+        self.save_state()
 
         print("-" * 60)
 
@@ -806,7 +954,7 @@ async def run_autonomous_simulation_loop():
         print(f"\n{'='*65}\n🔄 [CLOUD CYCLE #{cycle_count}] Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*65}")
 
         try:
-            # 0. Check and Process Remote Telegram Commands (/status, /pause, /resume, /closeall, /harvest)
+            # 0. Check and Process Remote Telegram Commands (/status, /scorecard, /pause, /resume, /closeall, /harvest)
             await trader.handle_remote_commands()
 
             # 1. Intelligence & Market Regime Update
@@ -854,7 +1002,11 @@ async def run_autonomous_simulation_loop():
                 print(f"💤 Sleeping {sleep_secs}s before next market scan...")
                 await asyncio.sleep(sleep_secs)
 
-            # 5. Hourly Telegram Heartbeat Digest
+            # 5. 24-Hour Midnight / Daily Performance Scorecard to Telegram
+            if time.time() - trader.last_daily_scorecard >= 86400:
+                await trader.send_daily_scorecard(manual=False)
+
+            # 6. Hourly Telegram Heartbeat Digest
             if time.time() - last_hourly_digest >= 3600:
                 last_hourly_digest = time.time()
                 total_nw = trader.get_total_net_worth()
