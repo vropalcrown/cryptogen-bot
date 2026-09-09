@@ -35,6 +35,7 @@ from market_regime import MarketRegimeDetector
 from meta_tracker import MetaTracker
 from survival_engine import evaluate_survival_tier
 from news_sentinel import NewsSentinel
+from whale_tracker import WhaleTracker
 
 
 class AutonomousDemoTrader:
@@ -49,6 +50,7 @@ class AutonomousDemoTrader:
         self.regime_detector = MarketRegimeDetector()
         self.meta_tracker = MetaTracker()
         self.news_sentinel = NewsSentinel()
+        self.whale_tracker = WhaleTracker()
 
         # === Regime state (will be updated before first trade) ===
         self.current_regime = {
@@ -340,10 +342,15 @@ class AutonomousDemoTrader:
             top3 = self.meta_tracker.hot_categories[:3]
             print(f"   Hot Meta: {' > '.join(top3)}")
 
-        # 5. Journal Insights
+        # 5. Smart Money / Whale Wallet Tracker (Helius RPC)
+        whale_activity = await self.whale_tracker.scan_whale_activity()
+        if whale_activity:
+            print(f"   🐋 Whale Tracker: {len(whale_activity)} active smart money transaction(s) detected!")
+
+        # 6. Journal Insights
         self.journal_weights = self.journal.get_failure_pattern_weights()
 
-        # 6. Brain Status
+        # 7. Brain Status
         print(f"   {self.brain.get_brain_status()}")
         print("---")
 
@@ -449,16 +456,23 @@ class AutonomousDemoTrader:
             # === NEW: Meta bonus for hot narrative tokens ===
             meta_bonus = self.meta_tracker.get_meta_bonus(name, symbol)
 
-            # === NEW: Enhanced prediction with meta + journal ===
+            # === NEW: Enhanced prediction with meta + journal + whale ===
             win_prob = self.brain.predict_win_probability(
                 features, meta_bonus=meta_bonus, journal_weights=self.journal_weights
             )
+
+            # Smart Money / Whale Tracker Bonus
+            whale_bonus = self.whale_tracker.get_whale_bonus(addr)
+            if whale_bonus > 0:
+                win_prob = min(0.99, win_prob + whale_bonus)
 
             print(f"\n   [EVALUATING] {symbol} (${price:.8f}) | Liq: ${liq:,.0f}")
             print(f"   Buy Ratio (5m): {features['buy_ratio_5m']*100:.1f}% | OFI: {features['ofi_5m']:+.2f} | Vol Accel: {features['vol_acceleration']:.2f}x")
             if meta_bonus > 0:
                 meta_cats = self.meta_tracker.classify_token(name, symbol)
                 print(f"   Meta Bonus: +{meta_bonus*100:.0f}% ({', '.join(meta_cats)})")
+            if whale_bonus > 0:
+                print(f"   🐋 Whale Bonus: +{whale_bonus*100:.0f}% (Tracked Smart Money Accumulated)")
             print(f"   ML Confidence: {win_prob*100:.1f}% (Need: {entry_threshold*100:.0f}%)")
 
             # Entry Check with adaptive threshold
@@ -719,8 +733,16 @@ class AutonomousDemoTrader:
 
 async def run_autonomous_simulation_loop():
     trader = AutonomousDemoTrader()
-    print("🚀 CryptoGen Cloud Worker started. Running 24/7 continuous autonomous trading loop...")
-    await send_telegram_alert("🚀 *[BOT ONLINE]* CryptoGen 24/7 Cloud Incubation started!\n• Mode: Virtual Paper Trading\n• Starting Balance: INR 100.00\n• Monitoring live Solana DEX pairs...")
+
+    # Start Web Analytics Dashboard in background thread
+    import threading
+    from dashboard_server import start_dashboard_server
+    dashboard_port = int(os.getenv("PORT", 8080))
+    dash_thread = threading.Thread(target=start_dashboard_server, args=(dashboard_port,), daemon=True)
+    dash_thread.start()
+
+    print(f"🚀 CryptoGen Cloud Worker started. Web Dashboard live on port {dashboard_port}!")
+    await send_telegram_alert(f"🚀 *[BOT ONLINE]* CryptoGen 24/7 Cloud Incubation started!\n• Mode: Virtual Paper Trading\n• Starting Balance: INR 100.00\n• Web Dashboard: Live on port {dashboard_port}")
 
     cycle_count = 0
     last_hourly_digest = time.time()
