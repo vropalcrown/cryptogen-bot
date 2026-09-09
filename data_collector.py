@@ -92,19 +92,49 @@ async def fetch_dex_token_data(token_address: str) -> dict:
 
 async def fetch_trending_solana_tokens() -> list:
     """
-    Pulls trending Solana token profiles from DexScreener token profiles endpoint.
+    Pulls high-conviction Solana trading candidates across multiple sources:
+      1. GeckoTerminal Trending Pools (verified liquidity $20k - $5M)
+      2. DexScreener Top Community Boosts (active retail momentum)
+      3. DexScreener Latest Token Profiles (early breakouts for shadow monitoring)
     """
-    url = "https://api.dexscreener.com/token-profiles/latest/v1"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    candidates = []
+
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        # Source 1: GeckoTerminal Trending Pools (High Volume & Real Liquidity)
         try:
-            res = await client.get(url)
+            res = await client.get(
+                "https://api.geckoterminal.com/api/v2/networks/solana/trending_pools",
+                headers={"Accept": "application/json"}
+            )
             if res.status_code == 200:
-                data = res.json()
-                sol_tokens = [
-                    item.get("tokenAddress") for item in data
-                    if item.get("chainId") == "solana" and item.get("tokenAddress")
-                ]
-                return sol_tokens[:12]
+                for pool in res.json().get("data", []):
+                    base_id = pool.get("relationships", {}).get("base_token", {}).get("data", {}).get("id", "")
+                    addr = base_id.replace("solana_", "")
+                    if addr and len(addr) >= 32:
+                        candidates.append(addr)
         except Exception:
             pass
-    return []
+
+        # Source 2: DexScreener Top Community Boosts
+        try:
+            res = await client.get("https://api.dexscreener.com/token-boosts/top/v1")
+            if res.status_code == 200:
+                for item in res.json():
+                    if item.get("chainId") == "solana" and item.get("tokenAddress"):
+                        candidates.append(item["tokenAddress"])
+        except Exception:
+            pass
+
+        # Source 3: DexScreener Latest Token Profiles (early gems / shadow targets)
+        try:
+            res = await client.get("https://api.dexscreener.com/token-profiles/latest/v1")
+            if res.status_code == 200:
+                for item in res.json()[:10]:
+                    if item.get("chainId") == "solana" and item.get("tokenAddress"):
+                        candidates.append(item["tokenAddress"])
+        except Exception:
+            pass
+
+    # Deduplicate preserving order
+    unique_candidates = list(dict.fromkeys(candidates))
+    return unique_candidates[:30]

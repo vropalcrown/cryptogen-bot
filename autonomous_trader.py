@@ -1144,18 +1144,21 @@ async def run_autonomous_simulation_loop():
             # 1. Intelligence & Market Regime Update
             await trader.update_intelligence()
 
-            # 2. Fetch live trending Solana candidates
+            # 2. Fetch live trending Solana candidates across GeckoTerminal, DexScreener & Boosts
             trending = await fetch_trending_solana_tokens()
             popular_tokens = [
                 "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
                 "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
                 "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",  # JUP
-                "CzLSujWBLFsSjncfkh59rUFqvafWcY5tzedWJSuypump"   # GOAT
+                "CzLSujWBLFsSjncfkh59rUFqvafWcY5tzedWJSuypump",  # GOAT
+                "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",  # POPCAT
+                "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",   # MEW
+                "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"   # PNUT
             ]
             candidates = list(dict.fromkeys(trending + popular_tokens))
 
-            # 3. Scan & execute candidate trades (Virtual or Live)
-            await trader.scan_and_trade(candidates[:10])
+            # 3. Scan & execute candidate trades (Virtual or Live) across up to 25 candidates
+            await trader.scan_and_trade(candidates[:25])
             trader.display_dashboard()
 
             # 3.5 Shadow Watchlist: Evaluate post-rejection outcomes (False Negatives & Dodged Rugs)
