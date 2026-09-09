@@ -14,7 +14,7 @@ from config import (
     STARTING_BALANCE_INR, TARGET_BALANCE_INR,
     STOP_LOSS_PERCENT, TAKE_PROFIT_STAGES,
     EMERGENCY_RESERVE_INR, SOL_TO_INR_ESTIMATE, PAPER_TRADING,
-    MILESTONE_PROFIT_SWEEP_INR, RESEED_CAPITAL_INR, PERSONAL_WITHDRAWAL_WALLET
+    PERSONAL_WITHDRAWAL_WALLET, COMPOUNDING_LADDER
 )
 from quant_math import (
     ATA_RENT_EXEMPTION_SOL, BASE_TX_FEE_SOL, AVERAGE_PRIORITY_FEE_SOL,
@@ -70,23 +70,26 @@ class AutonomousDemoTrader:
         self.trade_counter = 0
         self.session_start = time.time()
 
+        # Compounding Ladder Tracking
+        self.current_cycle_idx = 0  # Starts at Cycle 1 (index 0)
+        self.is_danger_halted = False
+
         # Track last known macro state for journal
         self.last_macro_change = 0.0
 
         self.is_live = (not PAPER_TRADING) and (self.live_sol_balance > 0.001)
         mode_str = f"LIVE ON-CHAIN (Balance: {self.live_sol_balance:.4f} SOL)" if self.is_live else "PAPER SIMULATION (Awaiting SOL Deposit)"
+        ladder_stage = COMPOUNDING_LADDER[self.current_cycle_idx]
         print("\n" + "=" * 70)
         print("      ⚡ CRYPTOGEN v2 — INTELLIGENT AUTONOMOUS TRADER ⚡")
         print("=" * 70)
         print(f" Execution Mode     : {mode_str}")
         print(f" Burner Address     : {self.executor.wallet_pubkey}")
-        print(f" Starting Balance   : INR{self.portfolio_inr:.2f} (Target: INR{TARGET_BALANCE_INR:.2f})")
+        print(f" Compounding Cycle  : Cycle #{ladder_stage['cycle']} (Goal: INR {ladder_stage['seed_inr']:.0f} -> INR {ladder_stage['target_inr']:.0f})")
+        print(f" Danger Floor       : INR {ladder_stage['danger_floor_inr']:.0f} (Emergency freeze if breached)")
+        print(f" Harvest Policy     : Lock INR {ladder_stage['profit_sweep_inr']:.0f} | Re-seed INR {ladder_stage['reseed_inr']:.0f}")
         print(f" Smart Brain v2     : Ensemble RF+GBM | Adaptive Threshold | RL")
-        print(f" Trade Journal      : Failure-aware categorization")
-        print(f" Market Regime      : Auto bull/bear/crab detection")
-        print(f" Meta Tracker       : Narrative trend intelligence")
-        print(f" Quant Risk Engine  : Fractional Kelly + AMM Price Impact")
-        print(f" Manipulation Filter: Wash-trading + HHI Concentration")
+        print(f" Survival Engine    : Conway Automaton Dynamic Risk Throttling")
         if not self.is_live and not PAPER_TRADING:
             print(f"\n! [NOTICE] Real Mode enabled, but burner wallet has 0.0000 SOL.")
             print(f"  Deposit SOL to: {self.executor.wallet_pubkey}")
@@ -101,26 +104,62 @@ class AutonomousDemoTrader:
         ])
         return self.portfolio_inr + self.locked_ata_rent_inr + position_value
 
+    def get_current_ladder_stage(self) -> dict:
+        """Returns the current active cycle config from COMPOUNDING_LADDER."""
+        idx = min(self.current_cycle_idx, len(COMPOUNDING_LADDER) - 1)
+        return COMPOUNDING_LADDER[idx]
+
+    async def check_danger_floor(self) -> bool:
+        """
+        Safety Checkpoint:
+        If current net worth drops below the cycle's danger floor (e.g. INR 100 in Cycle 2),
+        immediately freeze all trading and alert the user via Telegram.
+        """
+        stage = self.get_current_ladder_stage()
+        danger_floor = stage["danger_floor_inr"]
+        total_nw = self.get_total_net_worth()
+
+        if total_nw <= danger_floor and not self.is_danger_halted:
+            self.is_danger_halted = True
+            print("\n" + "🚨" * 35)
+            print(f"🛑 [DANGER FLOOR BREACHED] Net worth INR {total_nw:.2f} <= Danger Floor INR {danger_floor:.2f}!")
+            print(f"   Trading HALTED to protect remaining capital in Cycle #{stage['cycle']}.")
+            print("🚨" * 35 + "\n")
+
+            await send_telegram_alert(
+                f"🚨 *[DANGER FLOOR HALT - CYCLE #{stage['cycle']}]*\n"
+                f"• *Current Net Worth:* INR {total_nw:.2f}\n"
+                f"• *Danger Floor:* INR {danger_floor:.2f}\n"
+                f"• *Status:* Trading FROZEN immediately to preserve remaining capital!\n"
+                f"• Manual review required before resuming."
+            )
+            return True
+        return self.is_danger_halted
+
     async def check_milestone_harvest(self):
         """
-        Milestone Harvest Protocol:
-        When total net worth reaches >= INR 1,000.00:
+        Geometric Compounding Ladder Milestone Protocol:
+        When total net worth reaches the target for the current cycle:
           1. Closes any remaining open positions
           2. Reclaims all ATA rent deposits
-          3. Locks INR 600.00 (INR 100 recovered capital + INR 500 profit)
-          4. Leaves INR 400.00 in the bot to compound Cycle 2
-          5. Saves the winning ML model weights as 'golden_checkpoint.joblib'
-          6. Sends a celebratory Telegram alert with withdrawal details
+          3. Sweeps profit into safe reserve / cold wallet
+          4. Advances to the next cycle and re-seeds the new starting capital
+          5. Saves the winning ML model weights as 'golden_checkpoint_cycle_X.joblib'
+          6. Sends a celebratory Telegram alert with details
         """
+        stage = self.get_current_ladder_stage()
+        target = stage["target_inr"]
         total_nw = self.get_total_net_worth()
-        if total_nw >= TARGET_BALANCE_INR:
+
+        if total_nw >= target:
+            cycle_num = stage["cycle"]
             print("\n" + "🎉" * 35)
-            print(f"🏆 [MILESTONE REACHED] NET WORTH HIT INR {total_nw:.2f} (>= INR 1,000.00)!")
+            print(f"🏆 [CYCLE #{cycle_num} COMPLETED] NET WORTH HIT INR {total_nw:.2f} (>= INR {target:.2f})!")
             print("🎉" * 35)
 
-            # 1. Close any open positions immediately to lock gains
+            # 1. Close open positions to lock gains
             if self.active_positions:
-                print(f"🔒 Closing {len(self.active_positions)} active position(s) to lock profit...")
+                print(f"🔒 Closing {len(self.active_positions)} active position(s) to lock cycle profit...")
                 for addr, pos in list(self.active_positions.items()):
                     await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
                     self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
@@ -128,38 +167,45 @@ class AutonomousDemoTrader:
                 self.active_positions.clear()
                 self.locked_ata_rent_inr = 0.0
 
-            # 2. Permanent Model Checkpoint: Save the winning brain
+            # 2. Permanent Model Checkpoint
             import shutil
-            golden_path = os.path.join(os.path.dirname(__file__), "golden_checkpoint.joblib")
+            golden_path = os.path.join(os.path.dirname(__file__), f"golden_checkpoint_cycle_{cycle_num}.joblib")
             src_model = os.path.join(os.path.dirname(__file__), "cryptogen_ml_model.joblib")
             if os.path.exists(src_model):
                 shutil.copyfile(src_model, golden_path)
-                print(f"💾 [GOLDEN MODEL SAVED] Winning ML weights frozen to: golden_checkpoint.joblib")
+                print(f"💾 [GOLDEN MODEL SAVED] Cycle #{cycle_num} ML weights saved to: {os.path.basename(golden_path)}")
 
-            # 3. Harvest: Separate INR 600 profit from INR 400 reseed pool
-            harvested_profit = MILESTONE_PROFIT_SWEEP_INR
-            reseed_balance = max(RESEED_CAPITAL_INR, self.portfolio_inr - harvested_profit)
-            self.portfolio_inr = reseed_balance
+            # 3. Harvest & Re-Seed
+            profit_sweep = stage["profit_sweep_inr"]
+            reseed_capital = stage["reseed_inr"]
+            self.portfolio_inr = reseed_capital
+            self.is_danger_halted = False  # Reset danger status for new cycle
 
-            sol_harvest = harvested_profit / SOL_TO_INR_ESTIMATE
-            dest_msg = f"Sent to {PERSONAL_WITHDRAWAL_WALLET[:8]}..." if PERSONAL_WITHDRAWAL_WALLET else "Locked in reserve / ready for withdrawal"
+            # Advance to next ladder cycle
+            if self.current_cycle_idx < len(COMPOUNDING_LADDER) - 1:
+                self.current_cycle_idx += 1
+                next_stage = self.get_current_ladder_stage()
+                next_info = f"Cycle #{next_stage['cycle']} initialized with INR {reseed_capital:.0f} (Target: INR {next_stage['target_inr']:.0f}, Danger Floor: INR {next_stage['danger_floor_inr']:.0f})"
+            else:
+                next_info = "Ultimate ladder cycle completed! Bot awaiting creator instructions."
 
-            print(f"\n💰 [HARVEST SUMMARY]")
-            print(f"   • User Profit + Principal Locked : INR {harvested_profit:.2f} (~{sol_harvest:.4f} SOL)")
-            print(f"   • Re-Seed Balance for Cycle 2   : INR {reseed_balance:.2f} (Above EXPANSION tier!)")
-            print(f"   • Status                        : {dest_msg}")
+            sol_harvest = profit_sweep / SOL_TO_INR_ESTIMATE
+            dest_msg = f"Sent to {PERSONAL_WITHDRAWAL_WALLET[:8]}..." if PERSONAL_WITHDRAWAL_WALLET else "Locked in cold reserve"
+
+            print(f"\n💰 [CYCLE #{cycle_num} HARVEST SUMMARY]")
+            print(f"   • Profit Secured & Locked Away : INR {profit_sweep:.2f} (~{sol_harvest:.4f} SOL)")
+            print(f"   • Re-Seed Working Balance      : INR {reseed_capital:.2f}")
+            print(f"   • Next Stage                   : {next_info}")
+            print(f"   • Status                       : {dest_msg}")
             print("-" * 65 + "\n")
 
             await send_telegram_alert(
-                f"🏆 *[10X MILESTONE REACHED!]*\n\n"
-                f"💰 *Profit Harvest Protocol Triggered:*\n"
-                f"• *Recovered Capital:* INR 100.00\n"
-                f"• *Pure Profit Locked:* INR 500.00\n"
-                f"• *Total Secured for You:* INR {harvested_profit:.2f} (~{sol_harvest:.4f} SOL)\n\n"
-                f"🔄 *Cycle 2 Re-Seed:*\n"
-                f"• *New Working Capital:* INR {reseed_balance:.2f}\n"
-                f"• Bot continues compounding on house money!\n"
-                f"• Golden ML weights saved permanently."
+                f"🏆 *[CYCLE #{cycle_num} TARGET CRUSHED!]*\n\n"
+                f"💰 *Profit Locked Away:* INR {profit_sweep:.2f} (~{sol_harvest:.4f} SOL)\n"
+                f"🔄 *Next Cycle Seed:* INR {reseed_capital:.2f}\n"
+                f"🎯 *Next Goal:* INR {next_stage['target_inr']:.0f}\n"
+                f"🛡️ *Next Danger Floor:* INR {next_stage['danger_floor_inr']:.0f}\n"
+                f"💾 Winning brain frozen to golden checkpoint."
             )
 
     def calculate_kelly_position_size(self, win_probability: float) -> float:
@@ -221,6 +267,11 @@ class AutonomousDemoTrader:
         print("---")
 
     async def scan_and_trade(self, candidate_addresses: list):
+        # Check Danger Floor (Cycle safety limit)
+        if await self.check_danger_floor():
+            print(f"   [HALT] Danger Floor active. Trading halted to preserve seed.")
+            return
+
         # Check regime — if CRASH, halt all new trades
         if self.current_regime.get("regime") == "CRASH":
             print(f"   [HALT] Market crash detected. No new trades allowed.")
@@ -512,24 +563,29 @@ class AutonomousDemoTrader:
         total_nw = self.get_total_net_worth()
         total_trades = self.wins + self.losses
         win_rate = (self.wins / total_trades * 100) if total_trades > 0 else 0.0
-        progress = min(100.0, (total_nw / TARGET_BALANCE_INR) * 100)
+        stage = self.get_current_ladder_stage()
+        cycle_target = stage["target_inr"]
+        progress = min(100.0, (total_nw / cycle_target) * 100)
         uptime = time.time() - self.session_start
 
         regime = self.current_regime.get("regime", "UNKNOWN")
         regime_emoji = self.current_regime.get("emoji", "")
         st = getattr(self, "survival_tier", evaluate_survival_tier(total_nw))
 
+        danger_status = "⚠️ FROZEN" if self.is_danger_halted else f"INR {stage['danger_floor_inr']:.0f}"
+
         print("\n" + "-" * 60)
-        print(f" PORTFOLIO: INR{total_nw:.2f} / INR{TARGET_BALANCE_INR:.2f}")
-        print(f"   Liquid Cash    : INR{self.portfolio_inr:.2f}")
-        print(f"   ATA Locked     : INR{self.locked_ata_rent_inr:.2f} (Refundable)")
+        print(f" PORTFOLIO: INR {total_nw:.2f} | CYCLE #{stage['cycle']} GOAL: INR {cycle_target:,.0f}")
+        print(f"   Liquid Cash    : INR {self.portfolio_inr:.2f}")
+        print(f"   ATA Locked     : INR {self.locked_ata_rent_inr:.2f} (Refundable)")
         print(f"   Open Positions : {len(self.active_positions)}")
         print(f"   Win Rate       : {win_rate:.1f}% ({self.wins}W / {self.losses}L)")
+        print(f"   Danger Floor   : {danger_status}")
         print(f"   Survival Tier  : {st.emoji} {st.tier} (Floor: ${st.min_liquidity_usd:,.0f})")
         print(f"   Market Regime  : {regime_emoji} {regime}")
         print(f"   Brain Accuracy : {self.brain.recent_accuracy*100:.0f}% | Threshold: {self.brain.adaptive_threshold*100:.0f}%")
         bar_len = int(progress // 5)
-        print(f"   Target Metric  : [{'#' * bar_len}{'-' * (20 - bar_len)}] {progress:.1f}%")
+        print(f"   Cycle Metric   : [{'#' * bar_len}{'-' * (20 - bar_len)}] {progress:.1f}%")
 
         # Journal summary if we have trades
         if self.journal.entries:
