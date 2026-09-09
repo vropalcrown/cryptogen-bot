@@ -345,6 +345,8 @@ DASHBOARD_HTML = """
                 </tr>
               `;
             }).join('');
+          }
+
           // Shadow Watchlist Dynamic Re-render
           const shadow = data.shadow_stats || {};
           const shadowEl = document.getElementById('shadow-summary');
