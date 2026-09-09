@@ -633,11 +633,49 @@ class AutonomousDemoTrader:
                 for addr, pos in list(self.active_positions.items()):
                     await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
                     self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
-                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * self.sol_to_inr) + pos["ata_locked_inr"]
+                    curr_p = pos.get("curr_price", pos["entry_price"])
+                    rem_ratio = pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0))
+                    price_ratio = curr_p / max(1e-12, pos["entry_price"])
+                    gross_rec = pos["invested_inr"] * rem_ratio * price_ratio
+                    sell_fee = round(0.50 + (gross_rec * 0.003), 2)
+                    self.total_fees_paid_inr += sell_fee
+                    net_rec = max(0.0, gross_rec - sell_fee)
+                    refund_ata = pos.get("ata_locked_inr", 0.0)
+                    self.locked_ata_rent_inr = max(0.0, self.locked_ata_rent_inr - refund_ata)
+                    self.portfolio_inr += (net_rec + refund_ata)
+
+                    gain_loss = net_rec - (pos["invested_inr"] * rem_ratio)
+                    self.realized_profit_inr += gain_loss
+                    if gain_loss >= 0:
+                        self.wins += 1
+                    else:
+                        self.losses += 1
+
+                    tx_entry = {
+                        "id": f"tx_{int(time.time()*1000)}",
+                        "time": time.strftime("%H:%M:%S"),
+                        "timestamp": time.time(),
+                        "token": pos["token"],
+                        "address": addr,
+                        "action": "EMERGENCY CLOSE",
+                        "price": curr_p,
+                        "size_inr": round(pos["invested_inr"] * rem_ratio, 2),
+                        "gain_loss_inr": round(gain_loss, 2),
+                        "fee_inr": round(sell_fee, 2),
+                        "money_left": round(self.portfolio_inr, 2),
+                        "status": "PROFIT" if gain_loss >= 0 else "LOSS"
+                    }
+                    if not hasattr(self, "trade_history"):
+                        self.trade_history = []
+                    self.trade_history.insert(0, tx_entry)
+                    if len(self.trade_history) > 100:
+                        self.trade_history.pop()
+
                 self.active_positions.clear()
                 self.locked_ata_rent_inr = 0.0
                 self.save_state()
-                await send_telegram_alert(f"🚨 *[EMERGENCY CLOSE ALL]* Closed {closed_count} position(s). All capital converted to cash/SOL + ATA rent reclaimed!")
+                self.dump_live_state()
+                await send_telegram_alert(f"🚨 *[EMERGENCY CLOSE ALL]* Closed {closed_count} position(s). All capital converted to cash/SOL + ATA rent reclaimed! Cash: INR {self.portfolio_inr:.2f}")
 
             elif cmd == "/harvest":
                 await self.check_milestone_harvest()
@@ -1000,7 +1038,8 @@ class AutonomousDemoTrader:
                 continue
 
             self.trade_counter += 1
-            tokens_bought = (size_inr / self.sol_to_inr) / price
+            invested_usd = size_inr / 86.5  # Convert INR to USD to match DexScreener USD price
+            tokens_bought = invested_usd / max(1e-12, price)
 
             active_p = self.autotuner.active_params if hasattr(self, "autotuner") else {}
             sl_pct = active_p.get("stop_loss_pct", STOP_LOSS_PERCENT)

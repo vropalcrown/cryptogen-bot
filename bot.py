@@ -130,7 +130,7 @@ class CryptoGenBot:
 
             # Check Stop Loss (-30%)
             if current_price <= pos["stop_loss_price"]:
-                recovered_inr = (pos["remaining_tokens"] * current_price) * SOL_TO_INR_ESTIMATE
+                recovered_inr = pos["invested_inr"] * (pos["remaining_tokens"] / max(1e-6, pos["initial_tokens"])) * (current_price / max(1e-12, pos["entry_price"]))
                 self.portfolio_inr += recovered_inr
                 loss_inr = pos["invested_inr"] - recovered_inr
                 print(f"🚨 [STOP LOSS HIT] Sold 100% of {pos['token']}. Realized Loss: -₹{loss_inr:.2f}")
@@ -143,7 +143,8 @@ class CryptoGenBot:
                 if not stage["hit"] and current_price >= stage["price"]:
                     tokens_to_sell = pos["initial_tokens"] * stage["ratio"]
                     tokens_to_sell = min(tokens_to_sell, pos["remaining_tokens"])
-                    proceeds_inr = (tokens_to_sell * current_price) * SOL_TO_INR_ESTIMATE
+                    sold_ratio = tokens_to_sell / max(1e-6, pos["initial_tokens"])
+                    proceeds_inr = pos["invested_inr"] * sold_ratio * (current_price / max(1e-12, pos["entry_price"]))
                     self.portfolio_inr += proceeds_inr
                     pos["remaining_tokens"] -= tokens_to_sell
                     stage["hit"] = True
