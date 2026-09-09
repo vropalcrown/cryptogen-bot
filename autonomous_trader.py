@@ -27,7 +27,7 @@ from features import extract_features_from_token_data
 from ml_brain import CryptoGenBrain
 from onchain_executor import SolanaOnChainExecutor, SOL_MINT
 from ata_reclaimer import ATARentReclaimer
-from telegram_notifier import send_telegram_alert
+from telegram_notifier import send_telegram_alert, poll_telegram_commands
 
 # === NEW INTELLIGENCE MODULES ===
 from trade_journal import TradeJournal
@@ -75,6 +75,7 @@ class AutonomousDemoTrader:
         # Compounding Ladder Tracking
         self.current_cycle_idx = 0  # Starts at Cycle 1 (index 0)
         self.is_danger_halted = False
+        self.is_paused = False  # Controlled via Telegram /pause and /resume
 
         # Track last known macro state for journal
         self.last_macro_change = 0.0
@@ -210,6 +211,75 @@ class AutonomousDemoTrader:
                 f"💾 Winning brain frozen to golden checkpoint."
             )
 
+    async def handle_remote_commands(self):
+        """
+        Polls Telegram for user remote commands and executes them instantly.
+        """
+        commands = await poll_telegram_commands()
+        for cmd in commands:
+            print(f"   📱 [TELEGRAM COMMAND RECEIVED] {cmd}")
+
+            if cmd == "/status":
+                stage = self.get_current_ladder_stage()
+                total_nw = self.get_total_net_worth()
+                regime = self.current_regime.get("regime", "UNKNOWN")
+                nr = getattr(self, "news_report", {})
+                pause_status = "⏸️ PAUSED" if self.is_paused else "▶️ ACTIVE"
+                st = getattr(self, "survival_tier", evaluate_survival_tier(total_nw))
+
+                pos_summary = "\n".join([
+                    f"  • {p['token']}: ${p['entry_price']:.8f} (Invested: ₹{p['invested_inr']:.2f})"
+                    for p in self.active_positions.values()
+                ]) or "  • None (Cash 100% liquid)"
+
+                await send_telegram_alert(
+                    f"📊 *[CRYPTOGEN STATUS REPORT]*\n\n"
+                    f"• *Status:* {pause_status}\n"
+                    f"• *Net Worth:* INR {total_nw:.2f} / Goal: INR {stage['target_inr']:,.0f}\n"
+                    f"• *Liquid Cash:* INR {self.portfolio_inr:.2f}\n"
+                    f"• *Cycle:* #{stage['cycle']} (Danger Floor: INR {stage['danger_floor_inr']:.0f})\n"
+                    f"• *Survival Tier:* {st.emoji} {st.tier}\n"
+                    f"• *Market Regime:* {regime}\n"
+                    f"• *News Sentiment:* {nr.get('sentiment_label', 'NEUTRAL')}\n"
+                    f"• *Win Rate:* {self.wins}W / {self.losses}L\n\n"
+                    f"💼 *Open Positions:*\n{pos_summary}"
+                )
+
+            elif cmd == "/pause":
+                self.is_paused = True
+                print("   ⏸️ [BOT PAUSED] New token buying suspended by user.")
+                await send_telegram_alert("⏸️ *[BOT PAUSED]* Autonomous buying suspended. Active positions will still be monitored for TP/SL.")
+
+            elif cmd == "/resume":
+                self.is_paused = False
+                print("   ▶️ [BOT RESUMED] Autonomous buying active.")
+                await send_telegram_alert("▶️ *[BOT RESUMED]* Autonomous market scans and buying resumed!")
+
+            elif cmd == "/closeall":
+                print("   🚨 [EMERGENCY CLOSE ALL] Selling all active positions...")
+                closed_count = len(self.active_positions)
+                for addr, pos in list(self.active_positions.items()):
+                    await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
+                    self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
+                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * SOL_TO_INR_ESTIMATE) + pos["ata_locked_inr"]
+                self.active_positions.clear()
+                self.locked_ata_rent_inr = 0.0
+                await send_telegram_alert(f"🚨 *[EMERGENCY CLOSE ALL]* Closed {closed_count} position(s). All capital converted to cash/SOL + ATA rent reclaimed!")
+
+            elif cmd == "/harvest":
+                await self.check_milestone_harvest()
+
+            elif cmd == "/help":
+                await send_telegram_alert(
+                    "🤖 *CryptoGen Remote Commands:*\n\n"
+                    "• `/status` - Live portfolio, open trades & regime\n"
+                    "• `/pause` - Pause autonomous buying\n"
+                    "• `/resume` - Resume autonomous buying\n"
+                    "• `/closeall` - Emergency close all positions to SOL\n"
+                    "• `/harvest` - Check and trigger profit sweep\n"
+                    "• `/help` - Show this menu"
+                )
+
     def calculate_kelly_position_size(self, win_probability: float) -> float:
         """Kelly sizing adjusted by survival tier and market regime multiplier."""
         tradeable_cash = max(0.0, self.portfolio_inr - EMERGENCY_RESERVE_INR)
@@ -278,6 +348,11 @@ class AutonomousDemoTrader:
         print("---")
 
     async def scan_and_trade(self, candidate_addresses: list):
+        # Check User Remote Pause
+        if self.is_paused:
+            print(f"   [PAUSED] Bot is paused by user. Skipping new token buys.")
+            return
+
         # Check Danger Floor (Cycle safety limit)
         if await self.check_danger_floor():
             print(f"   [HALT] Danger Floor active. Trading halted to preserve seed.")
@@ -466,13 +541,36 @@ class AutonomousDemoTrader:
             curr_price = price_dict.get(addr, pos["entry_price"])
             pnl_pct = ((curr_price - pos["entry_price"]) / pos["entry_price"]) * 100
 
-            # Track peak price for journal
+            # Track peak price and ratchet Trailing Stop-Loss
             if curr_price > pos.get("peak_price", pos["entry_price"]):
                 pos["peak_price"] = curr_price
 
-            print(f"   [{pos['token']}] Current: ${curr_price:.8f} ({pnl_pct:+.1f}%) | Peak: ${pos.get('peak_price', 0):.8f}")
+            peak = pos.get("peak_price", pos["entry_price"])
+            entry = pos["entry_price"]
+            peak_gain_pct = ((peak - entry) / entry) * 100
 
-            # === Check Stop Loss (-30%) ===
+            # Dynamic Trailing Stop-Loss Escalator:
+            # Tier 3 (5x+ Moonshot): Trail 20% below peak
+            if peak >= entry * 5.0:
+                trailing_stop = peak * 0.80
+                if trailing_stop > pos["stop_loss_price"]:
+                    pos["stop_loss_price"] = trailing_stop
+                    print(f"   📈 [TRAILING STOP ESCALATED] {pos['token']}: Locked at ${trailing_stop:.8f} (80% of ${peak:.8f} peak)")
+            # Tier 2 (2x Double): Trail 25% below peak
+            elif peak >= entry * 2.0:
+                trailing_stop = peak * 0.75
+                if trailing_stop > pos["stop_loss_price"]:
+                    pos["stop_loss_price"] = trailing_stop
+                    print(f"   📈 [TRAILING STOP ESCALATED] {pos['token']}: Locked at ${trailing_stop:.8f} (75% of ${peak:.8f} peak)")
+            # Tier 1 (+30% Surge): Move stop-loss to Break-Even (entry price)
+            elif peak >= entry * 1.30:
+                if entry > pos["stop_loss_price"]:
+                    pos["stop_loss_price"] = entry
+                    print(f"   🛡️ [BREAK-EVEN RATCHET] {pos['token']}: Stop-loss moved to entry price ${entry:.8f} (Zero Risk Locked)")
+
+            print(f"   [{pos['token']}] Current: ${curr_price:.8f} ({pnl_pct:+.1f}%) | Peak: ${peak:.8f} | Stop: ${pos['stop_loss_price']:.8f}")
+
+            # === Check Stop Loss (Trailing or Hard) ===
             if curr_price <= pos["stop_loss_price"]:
                 recovered_inr = (pos["remaining_tokens"] * curr_price) * SOL_TO_INR_ESTIMATE
                 await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
@@ -632,6 +730,9 @@ async def run_autonomous_simulation_loop():
         print(f"\n{'='*65}\n🔄 [CLOUD CYCLE #{cycle_count}] Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*65}")
 
         try:
+            # 0. Check and Process Remote Telegram Commands (/status, /pause, /resume, /closeall, /harvest)
+            await trader.handle_remote_commands()
+
             # 1. Intelligence & Market Regime Update
             await trader.update_intelligence()
 
