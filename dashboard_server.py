@@ -149,6 +149,40 @@ DASHBOARD_HTML = """
     .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
     .btn-neutral { background: rgba(255, 255, 255, 0.08); color: var(--text-main); }
     .btn-neutral:hover { background: rgba(255, 255, 255, 0.15); }
+
+    /* Terminal UI Theme for Live Feed */
+    .terminal-window {
+      background: #04060A;
+      border: 1px solid rgba(20, 241, 149, 0.25);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 15px rgba(20, 241, 149, 0.08);
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 14px;
+    }
+    .terminal-header {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #0B0F19; padding: 10px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .terminal-dots { display: flex; align-items: center; gap: 8px; }
+    .dot-red { width: 11px; height: 11px; border-radius: 50%; background: #FF5F56; display: inline-block; box-shadow: 0 0 6px rgba(255,95,86,0.6); }
+    .dot-yellow { width: 11px; height: 11px; border-radius: 50%; background: #FFBD2E; display: inline-block; }
+    .dot-green { width: 11px; height: 11px; border-radius: 50%; background: #27C93F; display: inline-block; }
+    .terminal-body {
+      padding: 16px; min-height: 220px; max-height: 320px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 5px; font-size: 12px; line-height: 1.5;
+      background: radial-gradient(circle at 50% 0%, rgba(20, 241, 149, 0.03) 0%, transparent 70%), #04060A;
+    }
+    .terminal-body::-webkit-scrollbar { width: 6px; }
+    .terminal-body::-webkit-scrollbar-track { background: #04060A; }
+    .terminal-body::-webkit-scrollbar-thumb { background: rgba(20, 241, 149, 0.25); border-radius: 3px; }
+    .terminal-body::-webkit-scrollbar-thumb:hover { background: var(--accent-cyan); }
+    .terminal-footer {
+      background: #080C14; padding: 8px 16px; border-top: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;
+    }
+    .blink-cursor { animation: blink 1s step-start infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
   </style>
 </head>
 <body>
@@ -273,14 +307,36 @@ DASHBOARD_HTML = """
       </div>
     </div>
 
-    <!-- Live Autonomous Quant Feed -->
-    <div class="panel" style="margin-top: 10px;">
-      <div class="panel-header">
-        <div class="panel-title">⚡ Live Autonomous Quant Feed</div>
-        <span style="font-size: 11px; color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace;" id="feed-ticker">Real-Time Sniper Ticker</span>
+    <!-- Live Autonomous Quant Feed (Retro Cyber Terminal Window) -->
+    <div class="terminal-window">
+      <!-- Terminal Window Bar -->
+      <div class="terminal-header">
+        <div class="terminal-dots">
+          <span class="dot-red"></span>
+          <span class="dot-yellow"></span>
+          <span class="dot-green"></span>
+          <span style="margin-left: 10px; font-size: 12px; color: var(--text-muted); font-weight: 600;">
+            <span style="color: var(--accent-cyan);">root@cryptogen-engine</span>:<span style="color: var(--accent-sol);">~</span># tail -f /var/log/sniper-telemetry.log
+          </span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 11px; color: var(--win-green); font-weight: 600; display: flex; align-items: center; gap: 6px;">
+            <span class="pulse-dot" style="width: 6px; height: 6px;"></span> TTY1: LIVE STREAM
+          </span>
+        </div>
       </div>
-      <div id="activity-feed" style="display: flex; flex-direction: column; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px; max-height: 280px; overflow-y: auto;">
-        <div style="color: var(--text-muted); text-align: center; padding: 20px;">Streaming live candidate audits & safety filters...</div>
+
+      <!-- Terminal Body Content -->
+      <div id="activity-feed" class="terminal-body">
+        <div style="color: #6B7280; font-family: 'JetBrains Mono', monospace;">[SYS_BOOT] Listening for real-time Solana mempool & DEX swaps...</div>
+      </div>
+
+      <!-- Terminal Footer Bar -->
+      <div class="terminal-footer">
+        <div>
+          <span style="color: var(--accent-cyan); font-weight: 700;">quant@solana:~$</span> <span style="color: #9CA3AF;">status --engine=active</span> <span class="blink-cursor" style="color: var(--accent-cyan); font-weight: 800;">█</span>
+        </div>
+        <div id="feed-line-count" style="color: #6B7280; font-family: 'JetBrains Mono', monospace;">15 audit logs in buffer</div>
       </div>
     </div>
   </div>
@@ -378,19 +434,34 @@ DASHBOARD_HTML = """
             }
           }
 
-          // Live Activity Feed Dynamic Re-render
+          // Live Activity Feed Terminal Re-render
           const feed = data.activity_feed || [];
           const feedEl = document.getElementById('activity-feed');
+          const lineCountEl = document.getElementById('feed-line-count');
+          if (lineCountEl) {
+            lineCountEl.innerText = `${feed.length} log lines in buffer`;
+          }
           if (feedEl && feed.length > 0) {
-            feedEl.innerHTML = feed.map(item => `
-              <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; border-left: 3px solid var(--accent-cyan);">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                  <span style="font-size: 14px;">${item.icon || '⚡'}</span>
-                  <span style="color: var(--text-main); font-weight: 500;">${item.message}</span>
+            feedEl.innerHTML = feed.map(item => {
+              const msg = item.message || '';
+              const isBlocked = msg.includes('Filtered') || msg.includes('Risk') || msg.includes('Top wallet') || msg.includes('Wash');
+              const isEval = msg.includes('Evaluated') || msg.includes('bar');
+              const isRunner = msg.includes('runner') || msg.includes('Hit') || msg.includes('Surged') || msg.includes('BUY');
+              
+              let tagColor = 'var(--accent-cyan)';
+              let tagText = '[AUDIT]  ';
+              if (isBlocked) { tagColor = 'var(--loss-red)'; tagText = '[BLOCKED]'; }
+              else if (isEval) { tagColor = 'var(--gold)'; tagText = '[EVAL]   '; }
+              else if (isRunner) { tagColor = 'var(--accent-sol)'; tagText = '[RUNNER] '; }
+
+              return `
+                <div style="display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.03); font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+                  <span style="color: #6B7280; font-size: 11px;">[${item.time}]</span>
+                  <span style="color: ${tagColor}; font-weight: 700; font-size: 11px;">${tagText}</span>
+                  <span style="color: #F3F4F6;">${item.icon || '⚡'} ${msg}</span>
                 </div>
-                <span style="color: var(--text-muted); font-size: 11px;">${item.time}</span>
-              </div>
-            `).join('');
+              `;
+            }).join('');
           }
 
           document.getElementById('sync-timer').innerText = `Updated: ${new Date().toLocaleTimeString()}`;
