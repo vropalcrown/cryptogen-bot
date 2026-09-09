@@ -252,6 +252,9 @@ DASHBOARD_HTML = """
             <div class="card-meta" id="shadow-details">
               Tracking rejected tokens for 2h post-rejection to retrain ML brain.
             </div>
+            <div id="shadow-recent-list" style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px;">
+              <!-- Dynamic list of recent dodged/missed tokens -->
+            </div>
           </div>
           <hr style="border: 0; border-top: 1px solid var(--card-border);">
           <div>
@@ -346,10 +349,30 @@ DASHBOARD_HTML = """
           const shadow = data.shadow_stats || {};
           const shadowEl = document.getElementById('shadow-summary');
           const shadowDetEl = document.getElementById('shadow-details');
+          const shadowListEl = document.getElementById('shadow-recent-list');
           if (shadowEl && shadow.total_tracked !== undefined) {
             shadowEl.innerHTML = `<span style="color: var(--win-green);">${shadow.dodged_crashes || 0} Dodged Crashes</span> • <span style="color: var(--gold);">${shadow.missed_runners || 0} Missed Runners</span>`;
             if (shadowDetEl) {
               shadowDetEl.innerText = `Active Watchlist: ${shadow.active_monitoring || 0} tokens | Auto-Retrained: ${shadow.auto_retrained || 0} times`;
+            }
+          }
+          if (shadowListEl) {
+            const recent = shadow.recent_outcomes || [];
+            if (recent.length > 0) {
+              shadowListEl.innerHTML = recent.map(item => {
+                const isDodge = item.type === 'DODGED_CRASH';
+                const col = isDodge ? 'var(--win-green)' : 'var(--gold)';
+                const icon = isDodge ? '🛡️' : '🚀';
+                const sign = item.pnl_pct >= 0 ? '+' : '';
+                return `
+                  <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.03); padding: 5px 10px; border-radius: 6px; border-left: 3px solid ${col}; font-size: 11px;">
+                    <span><b>${icon} ${item.symbol}</b> <span style="color: var(--text-muted); font-size: 10px;">(${item.time})</span></span>
+                    <span style="color: ${col}; font-weight: 700;">${sign}${item.pnl_pct}% (${isDodge ? 'Dodged Scam' : 'Runner'})</span>
+                  </div>
+                `;
+              }).join('');
+            } else {
+              shadowListEl.innerHTML = `<div style="color: var(--text-muted); font-size: 11px; padding: 4px 0;">Monitoring rejected tokens for 2 hours...</div>`;
             }
           }
 
@@ -392,11 +415,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.end_headers()
             self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
         elif self.path == "/api/state":
             self.send_response(200)
             self.send_header("Content-type", "application/json")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.end_headers()
 
             state = {
