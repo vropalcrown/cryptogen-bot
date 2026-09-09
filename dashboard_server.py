@@ -279,6 +279,16 @@ DASHBOARD_HTML = """
           </div>
           <hr style="border: 0; border-top: 1px solid var(--card-border);">
           <div>
+            <div class="card-title">🧬 Dynamic Strategy Self-Tuner</div>
+            <div style="font-size: 14px; font-weight: 700; color: var(--accent-cyan);" id="autotune-summary">
+              SL: -10% | BE: +20% | TP: +25% / +60% / +200%
+            </div>
+            <div class="card-meta" id="autotune-details">
+              Auto-calibrated against live Solana macro volatility & crab regime.
+            </div>
+          </div>
+          <hr style="border: 0; border-top: 1px solid var(--card-border);">
+          <div>
             <div class="card-title">🎯 Shadow Intelligence (Lookback Engine)</div>
             <div style="font-size: 14px; font-weight: 700; color: var(--accent-cyan);" id="shadow-summary">
               0 Dodged Crashes • 0 Missed Runners
@@ -432,6 +442,21 @@ DASHBOARD_HTML = """
             } else {
               shadowListEl.innerHTML = `<div style="color: var(--text-muted); font-size: 11px; padding: 4px 0;">Monitoring rejected tokens for 2 hours...</div>`;
             }
+          }
+
+          // Autotune Dynamic Telemetry
+          if (data.autotune_params) {
+            const ap = data.autotune_params;
+            const sl = ap.stop_loss_pct ? `-${Math.round(ap.stop_loss_pct * 100)}%` : '-10%';
+            const be = ap.breakeven_trigger ? `+${Math.round((ap.breakeven_trigger - 1) * 100)}%` : '+20%';
+            const tp1 = ap.tp1_mult ? `+${Math.round((ap.tp1_mult - 1) * 100)}%` : '+25%';
+            const tp2 = ap.tp2_mult ? `+${Math.round((ap.tp2_mult - 1) * 100)}%` : '+60%';
+            const tp3 = ap.tp3_mult ? `+${Math.round((ap.tp3_mult - 1) * 100)}%` : '+200%';
+            
+            const atSumEl = document.getElementById('autotune-summary');
+            const atDetEl = document.getElementById('autotune-details');
+            if (atSumEl) atSumEl.innerText = `SL: ${sl} | BE: ${be} | TP: ${tp1} / ${tp2} / ${tp3}`;
+            if (atDetEl && ap.last_reason) atDetEl.innerText = `${ap.volatility_regime || 'AUTO'}: ${ap.last_reason}`;
           }
 
           // Live Activity Feed Terminal Re-render

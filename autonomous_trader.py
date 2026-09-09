@@ -38,6 +38,7 @@ from news_sentinel import NewsSentinel
 from whale_tracker import WhaleTracker
 from arbitrage_engine import ArbitrageEngine
 from shadow_tracker import ShadowTracker
+from strategy_autotuner import StrategyAutoTuner
 
 BOT_STATE_FILE = os.path.join(os.path.dirname(__file__), "bot_state.json")
 
@@ -57,6 +58,7 @@ class AutonomousDemoTrader:
         self.whale_tracker = WhaleTracker()
         self.arbitrage_engine = ArbitrageEngine()
         self.shadow_tracker = ShadowTracker(brain=self.brain)
+        self.autotuner = StrategyAutoTuner(trader=self)
 
         # === Regime state (will be updated before first trade) ===
         self.current_regime = {
@@ -328,6 +330,7 @@ class AutonomousDemoTrader:
                 "live_sol_balance": round(getattr(self, "live_sol_balance", 0.0), 4),
                 "sol_to_inr": round(getattr(self, "sol_to_inr", 13000.0), 2),
                 "shadow_stats": self.shadow_tracker.get_summary_stats() if hasattr(self, "shadow_tracker") else {},
+                "autotune_params": self.autotuner.active_params if hasattr(self, "autotuner") else {},
                 "is_live": getattr(self, "is_live", False)
             }
 
@@ -455,6 +458,10 @@ class AutonomousDemoTrader:
                 nr = getattr(self, "news_report", {})
                 pause_status = "⏸️ PAUSED" if self.is_paused else "▶️ ACTIVE"
                 st = getattr(self, "survival_tier", evaluate_survival_tier(total_nw))
+                ap = self.autotuner.active_params if hasattr(self, "autotuner") else {}
+                sl_str = f"-{int(ap.get('stop_loss_pct', 0.10)*100)}%"
+                be_str = f"+{int((ap.get('breakeven_trigger', 1.20)-1)*100)}%"
+                tp_str = f"+{int((ap.get('tp1_mult', 1.25)-1)*100)}% / +{int((ap.get('tp2_mult', 1.60)-1)*100)}% / +{int((ap.get('tp3_mult', 3.00)-1)*100)}%"
 
                 pos_summary = "\n".join([
                     f"  • {p['token']}: ${p['entry_price']:.8f} (Invested: ₹{p['invested_inr']:.2f})"
@@ -470,6 +477,7 @@ class AutonomousDemoTrader:
                     f"• *Survival Tier:* {st.emoji} {st.tier}\n"
                     f"• *Market Regime:* {regime}\n"
                     f"• *SOL/INR Rate:* ₹{self.sol_to_inr:,.0f}\n"
+                    f"• *Dynamic Strategy:* SL: {sl_str} | BE: {be_str} | TP: {tp_str}\n"
                     f"• *Shadow Radar:* {getattr(self, 'shadow_tracker', None).get_summary_stats().get('dodged_crashes', 0) if hasattr(self, 'shadow_tracker') else 0} Dodged | {getattr(self, 'shadow_tracker', None).get_summary_stats().get('missed_runners', 0) if hasattr(self, 'shadow_tracker') else 0} Missed Caught\n"
                     f"• *News Sentiment:* {nr.get('sentiment_label', 'NEUTRAL')}\n"
                     f"• *Win Rate:* {self.wins}W / {self.losses}L\n\n"
@@ -478,6 +486,19 @@ class AutonomousDemoTrader:
 
             elif cmd == "/scorecard":
                 await self.send_daily_scorecard(manual=True)
+
+            elif cmd == "/tune":
+                print("   🧬 [REMOTE TUNE COMMAND] Evaluating strategy parameters...")
+                event = self.autotuner.evaluate_and_tune(manual=True)
+                await send_telegram_alert(
+                    f"🧬 *[AUTONOMOUS SELF-TUNER ACTIVATED]*\n\n"
+                    f"• *Cycle:* #{event['cycle']}\n"
+                    f"• *Market Regime:* {event['regime']} ({event['mode']})\n"
+                    f"• *Dynamic Stop-Loss:* {event['sl_pct']}\n"
+                    f"• *Break-Even Trigger:* {event['be_trigger']}\n"
+                    f"• *Take-Profit Ladder:* {event['tp_ladder']}\n\n"
+                    f"💡 *Strategy Calibration:* {event['reason']}"
+                )
 
             elif cmd == "/pause":
                 self.is_paused = True
@@ -511,6 +532,7 @@ class AutonomousDemoTrader:
                     "🤖 *CryptoGen Remote Commands:*\n\n"
                     "• `/status` - Live portfolio, open trades & regime\n"
                     "• `/scorecard` - Instant 24h Daily PnL scorecard\n"
+                    "• `/tune` - Dynamically recalculate SL/TP ratchets\n"
                     "• `/pause` - Pause autonomous buying\n"
                     "• `/resume` - Resume autonomous buying\n"
                     "• `/closeall` - Emergency close all positions to SOL\n"
@@ -563,7 +585,9 @@ class AutonomousDemoTrader:
         new_regime = new_regime_info.get("regime", "UNKNOWN")
 
         # Check for Regime Shift & Alert Telegram
+        regime_shifted = False
         if self.last_reported_regime is not None and new_regime != self.last_reported_regime:
+            regime_shifted = True
             old_regime = self.last_reported_regime
             new_emoji = new_regime_info.get("emoji", "🌊")
             new_desc = new_regime_info.get("description", "")
@@ -584,6 +608,18 @@ class AutonomousDemoTrader:
         regime = self.current_regime
         print(f"   {regime.get('emoji', '')} Market Regime: {regime['regime']} "
               f"(Confidence: {regime.get('confidence', 0)*100:.0f}%) — {regime.get('description', '')}")
+
+        # 2.5 Dynamic Auto-Tuner Calibration (Triggers on regime shift or periodic 6h cycle)
+        if hasattr(self, "autotuner") and (regime_shifted or (time.time() - getattr(self.autotuner, "last_tuned_at", 0) >= 21600)):
+            tune_res = self.autotuner.evaluate_and_tune(manual=False)
+            if regime_shifted:
+                await send_telegram_alert(
+                    f"🧬 *[STRATEGY ADAPTATION]*\n"
+                    f"Tuned for *{new_regime}*:\n"
+                    f"• Stop-Loss: {tune_res['sl_pct']}\n"
+                    f"• Break-Even: {tune_res['be_trigger']}\n"
+                    f"• TP Ladder: {tune_res['tp_ladder']}"
+                )
 
         # 3. Real-Time News Sentinel (With Anti-Fake-News Verification)
         self.news_report = await self.news_sentinel.analyze_market_news(sol_6h_change_pct=self.last_macro_change)
@@ -801,6 +837,16 @@ class AutonomousDemoTrader:
             self.trade_counter += 1
             tokens_bought = (size_inr / self.sol_to_inr) / price
 
+            active_p = self.autotuner.active_params if hasattr(self, "autotuner") else {}
+            sl_pct = active_p.get("stop_loss_pct", STOP_LOSS_PERCENT)
+            be_mult = active_p.get("breakeven_trigger", 1.20)
+            tp1 = active_p.get("tp1_mult", 1.25)
+            tp1_ratio = active_p.get("tp1_ratio", 0.50)
+            tp2 = active_p.get("tp2_mult", 1.60)
+            tp2_ratio = active_p.get("tp2_ratio", 0.30)
+            tp3 = active_p.get("tp3_mult", 3.00)
+            tp3_ratio = active_p.get("tp3_ratio", 0.20)
+
             self.active_positions[addr] = {
                 "trade_number": self.trade_counter,
                 "token": symbol,
@@ -813,14 +859,16 @@ class AutonomousDemoTrader:
                 "initial_tokens": tokens_bought,
                 "tx_hash": swap_res.get("tx_hash"),
                 "features": features,
-                "stop_loss_price": price * (1.0 - STOP_LOSS_PERCENT),
+                "stop_loss_price": price * (1.0 - sl_pct),
+                "breakeven_trigger": be_mult,
                 "entry_time": time.time(),  # NEW: Track hold duration
                 "entry_volume": live_data.get("volume_1h", 0),  # NEW: Volume at entry
                 "regime_at_entry": self.current_regime.get("regime", "UNKNOWN"),  # NEW
                 "tp_stages_hit": 0,  # NEW: Count TP stages
                 "tp_stages": [
-                    {"mult": s["mult"], "price": price * s["mult"], "ratio": s["sell_ratio"], "hit": False}
-                    for s in TAKE_PROFIT_STAGES
+                    {"mult": tp1, "price": price * tp1, "ratio": tp1_ratio, "hit": False},
+                    {"mult": tp2, "price": price * tp2, "ratio": tp2_ratio, "hit": False},
+                    {"mult": tp3, "price": price * tp3, "ratio": tp3_ratio, "hit": False}
                 ]
             }
 
@@ -829,7 +877,7 @@ class AutonomousDemoTrader:
             self.log_activity("🚀", f"BUY {symbol} @ ${price:.8f} (INR {size_inr:.2f})")
             print(f"   [BUY FILLED] {symbol} | Invested: INR{size_inr:.2f} | ATA Rent: INR{ata_locked:.2f} | Regime: {regime_tag}")
             print(f"   TX: {swap_res.get('tx_hash')[:32]}...")
-            print(f"   Stop Loss: ${price * (1.0 - STOP_LOSS_PERCENT):.8f} (-{int(STOP_LOSS_PERCENT*100)}%)")
+            print(f"   Stop Loss: ${price * (1.0 - sl_pct):.8f} (-{int(sl_pct*100)}%) | BE Trigger: +{int((be_mult-1)*100)}%")
             print(f"   Cash: INR{self.portfolio_inr:.2f} | Net Worth: INR{self.get_total_net_worth():.2f}")
             await send_telegram_alert(
                 f"*[BUY]* {symbol}\n"
@@ -877,8 +925,9 @@ class AutonomousDemoTrader:
                 if trailing_stop > pos["stop_loss_price"]:
                     pos["stop_loss_price"] = trailing_stop
                     print(f"   📈 [TRAILING STOP ESCALATED] {pos['token']}: Locked at ${trailing_stop:.8f} (88% of ${peak:.8f} peak)")
-            # Tier 1 (+20% Surge): Move stop-loss to Break-Even (entry price)
-            elif peak >= entry * 1.20:
+            # Tier 1 (Break-Even Ratchet): Move stop-loss to Break-Even (entry price)
+            be_mult = pos.get("breakeven_trigger", self.autotuner.active_params.get("breakeven_trigger", 1.20) if hasattr(self, "autotuner") else 1.20)
+            if peak >= entry * be_mult:
                 if entry > pos["stop_loss_price"]:
                     pos["stop_loss_price"] = entry
                     print(f"   🛡️ [BREAK-EVEN RATCHET] {pos['token']}: Stop-loss moved to entry price ${entry:.8f} (Zero Risk Locked)")
@@ -925,9 +974,9 @@ class AutonomousDemoTrader:
                     market_regime=pos.get("regime_at_entry", "UNKNOWN")
                 )
 
-                print(f"   [STOP LOSS] {pos['token']} sold @ -{int(STOP_LOSS_PERCENT*100)}%. Loss: -INR{loss:.2f} (ATA Refund: +INR{refund_ata:.2f})")
+                print(f"   [STOP LOSS] {pos['token']} sold @ {pnl_pct:+.1f}%. Loss: -INR{loss:.2f} (ATA Refund: +INR{refund_ata:.2f})")
                 await send_telegram_alert(
-                    f"*[STOP LOSS]* {pos['token']} (-{int(STOP_LOSS_PERCENT*100)}%)\n"
+                    f"*[STOP LOSS]* {pos['token']} ({pnl_pct:+.1f}%)\n"
                     f"- Loss: -INR{loss:.2f}\n"
                     f"- Reason: {category}\n"
                     f"- Cash: INR{self.portfolio_inr:.2f}"
