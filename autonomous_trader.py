@@ -200,7 +200,7 @@ class AutonomousDemoTrader:
         # Journal failure distribution
         journal_stats = ""
         if hasattr(self.journal, "failure_counts") and self.journal.failure_counts:
-            items = [f"{k}: {v}" for k, v in self.journal.failure_counts.items() if v > 0]
+            items = [f"{k.replace('_', ' ')}: {v}" for k, v in self.journal.failure_counts.items() if v > 0]
             if items:
                 journal_stats = "\n• *Trade Patterns:* " + ", ".join(items)
 

@@ -46,6 +46,10 @@ async def send_telegram_alert(message: str):
             res = await client.post(url, json=payload)
             if res.status_code != 200:
                 print(f"⚠️ [Telegram Alert Error] {res.text}")
+                # Fallback without parse_mode if markdown entities caused a 400 Bad Request
+                if "can't parse entities" in res.text:
+                    payload.pop("parse_mode", None)
+                    await client.post(url, json=payload)
         except Exception:
             pass
 
