@@ -1,0 +1,31 @@
+[
+  {
+    "timestamp": 1788934847.432109,
+    "token": "CDOGE",
+    "address": "CDOGE_TEST",
+    "category": "PERFECT_TRADE",
+    "entry_price": 2e-05,
+    "exit_price": 0.000204,
+    "peak_price": 0.000204,
+    "pnl_pct": 920.0,
+    "pnl_inr": 110.4,
+    "hold_duration_secs": 9.9,
+    "sol_macro_change_pct": 0.75,
+    "volume_at_entry": 22000.0,
+    "volume_at_exit": 0,
+    "was_stop_loss": false,
+    "tp_stages_hit": 3,
+    "market_regime": "CRAB",
+    "features": {
+      "buy_ratio_5m": 0.8867924528301887,
+      "buy_ratio_1h": 0.8493150684931506,
+      "ofi_5m": 0.7735849056603774,
+      "vol_acceleration": 4.090909090909091,
+      "price_change_5m": 6.8,
+      "price_change_1h": 31.0,
+      "liq_to_fdv": 0.35,
+      "liquidity_usd": 42000.0,
+      "wash_score": 8.0
+    }
+  }
+]

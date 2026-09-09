@@ -1,0 +1,99 @@
+{
+  "adaptive_threshold": 0.8900000000000002,
+  "recent_accuracy": 0.1,
+  "consecutive_losses": 5,
+  "consecutive_wins": 0,
+  "total_real_trades": 13,
+  "prediction_history": [
+    {
+      "timestamp": 1788934847.4330745,
+      "predicted_win": true,
+      "actual_win": true,
+      "category": "PERFECT_TRADE"
+    },
+    {
+      "timestamp": 1788935555.1379147,
+      "predicted_win": true,
+      "actual_win": true,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935560.194226,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935565.238177,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935570.0043545,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935576.645674,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935582.2020817,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935593.8857381,
+      "predicted_win": true,
+      "actual_win": true,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935598.539733,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935603.8271072,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935608.842152,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935616.588084,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    },
+    {
+      "timestamp": 1788935621.5596373,
+      "predicted_win": true,
+      "actual_win": false,
+      "category": "UNKNOWN"
+    }
+  ],
+  "feature_importance": {
+    "buy_ratio_5m": 0.0803,
+    "buy_ratio_1h": 0.0465,
+    "ofi_5m": 0.1372,
+    "vol_acceleration": 0.2416,
+    "price_change_5m": 0.1882,
+    "price_change_1h": 0.0115,
+    "liq_to_fdv": 0.0751,
+    "liquidity_usd": 0.0166,
+    "wash_score": 0.203
+  },
+  "last_updated": 1788935624.7713587
+}

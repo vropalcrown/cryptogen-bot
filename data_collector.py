@@ -1,0 +1,110 @@
+import httpx
+import pandas as pd
+import asyncio
+from quant_math import detect_wash_trading
+
+async def fetch_sol_macro_context() -> dict:
+    """
+    Ingests macro Solana market context via Binance REST API.
+    Computes 1h trend, EMA, and volatility to prevent trading during macro market dumps.
+    """
+    url = "https://api.binance.com/api/v3/klines?symbol=SOLUSDT&interval=15m&limit=24"
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        try:
+            res = await client.get(url)
+            if res.status_code == 200:
+                raw = res.json()
+                closes = [float(k[4]) for k in raw]
+                curr_price = closes[-1]
+                start_price = closes[0]
+                pct_change_6h = ((curr_price - start_price) / start_price) * 100
+                
+                # Simple EMA 9
+                ema_9 = pd.Series(closes).ewm(span=9, adjust=False).mean().iloc[-1]
+                is_uptrend = curr_price >= ema_9
+
+                return {
+                    "sol_price_usd": curr_price,
+                    "macro_trend": "BULLISH" if is_uptrend and pct_change_6h >= 0 else "BEARISH",
+                    "sol_6h_change_pct": round(pct_change_6h, 2),
+                    "safe_to_trade": pct_change_6h > -4.5  # Don't buy meme tokens if SOL dumped >4.5%
+                }
+        except Exception as e:
+            pass
+
+    # Safe fallback if Binance is unreachable
+    return {
+        "sol_price_usd": 140.0,
+        "macro_trend": "NEUTRAL",
+        "sol_6h_change_pct": 0.0,
+        "safe_to_trade": True
+    }
+
+async def fetch_dex_token_data(token_address: str) -> dict:
+    """
+    Pulls live online trading data for any Solana token via DexScreener API:
+    - 5m, 1h, 24h volume & price change
+    - Buy count vs Sell count (Order flow sentiment)
+    - Liquidity & Fully Diluted Valuation (FDV)
+    - Wash Trading Detection
+    """
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            res = await client.get(url)
+            if res.status_code != 200:
+                return None
+            
+            data = res.json()
+            pairs = data.get("pairs", [])
+            if not pairs:
+                return None
+                
+            pair = pairs[0]  # Select primary liquid pair
+            
+            price_usd = float(pair.get("priceUsd", 0.0) or 0.0)
+            liquidity_usd = float(pair.get("liquidity", {}).get("usd", 0.0) or 0.0)
+            vol_1h = float(pair.get("volume", {}).get("h1", 0.0) or 0.0)
+            p_chg_1h = float(pair.get("priceChange", {}).get("h1", 0.0) or 0.0)
+
+            # Wash trading check
+            wash_analysis = detect_wash_trading(vol_1h, liquidity_usd, p_chg_1h)
+
+            return {
+                "token": token_address,
+                "name": pair.get("baseToken", {}).get("name", "Unknown"),
+                "symbol": pair.get("baseToken", {}).get("symbol", "UNKNOWN"),
+                "price_usd": price_usd,
+                "liquidity_usd": liquidity_usd,
+                "fdv": float(pair.get("fdv", 0.0) or 0.0),
+                "volume_5m": float(pair.get("volume", {}).get("m5", 0.0) or 0.0),
+                "volume_1h": vol_1h,
+                "price_change_5m": float(pair.get("priceChange", {}).get("m5", 0.0) or 0.0),
+                "price_change_1h": p_chg_1h,
+                "buys_5m": int(pair.get("txns", {}).get("m5", {}).get("buys", 0) or 0),
+                "sells_5m": int(pair.get("txns", {}).get("m5", {}).get("sells", 0) or 0),
+                "buys_1h": int(pair.get("txns", {}).get("h1", {}).get("buys", 0) or 0),
+                "sells_1h": int(pair.get("txns", {}).get("h1", {}).get("sells", 0) or 0),
+                "wash_analysis": wash_analysis
+            }
+        except Exception as e:
+            return None
+
+async def fetch_trending_solana_tokens() -> list:
+    """
+    Pulls trending Solana token profiles from DexScreener token profiles endpoint.
+    """
+    url = "https://api.dexscreener.com/token-profiles/latest/v1"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            res = await client.get(url)
+            if res.status_code == 200:
+                data = res.json()
+                sol_tokens = [
+                    item.get("tokenAddress") for item in data
+                    if item.get("chainId") == "solana" and item.get("tokenAddress")
+                ]
+                return sol_tokens[:12]
+        except Exception:
+            pass
+    return []
