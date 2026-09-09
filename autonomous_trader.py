@@ -255,11 +255,12 @@ class AutonomousDemoTrader:
         print(f"   {regime.get('emoji', '')} Market Regime: {regime['regime']} "
               f"(Confidence: {regime.get('confidence', 0)*100:.0f}%) — {regime.get('description', '')}")
 
-        # 3. Real-Time News Sentinel
-        self.news_report = await self.news_sentinel.analyze_market_news()
+        # 3. Real-Time News Sentinel (With Anti-Fake-News Verification)
+        self.news_report = await self.news_sentinel.analyze_market_news(sol_6h_change_pct=self.last_macro_change)
         nr = self.news_report
         news_emoji = "🟢" if nr["sentiment_label"] == "BULLISH" else ("🔴" if nr["sentiment_label"] == "BEARISH" else "⚪")
-        print(f"   📰 News Sentiment: {news_emoji} {nr['sentiment_label']} (Score: {nr['sentiment_score']:+.2f}) | {nr['headline_count']} headlines")
+        fake_alert = f" [🛡️ FUD Caught: {nr['fake_news_reason'][:35]}...]" if nr.get("fake_news_detected") else ""
+        print(f"   📰 News Sentiment: {news_emoji} {nr['sentiment_label']} (Score: {nr['sentiment_score']:+.2f}) | {nr['headline_count']} headlines{fake_alert}")
         if nr.get("news_narratives"):
             print(f"   Trending in News: {', '.join(nr['news_narratives'])}")
 
