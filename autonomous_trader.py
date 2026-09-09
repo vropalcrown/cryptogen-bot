@@ -116,6 +116,49 @@ class AutonomousDemoTrader:
         idx = min(self.current_cycle_idx, len(COMPOUNDING_LADDER) - 1)
         return COMPOUNDING_LADDER[idx]
 
+    def dump_live_state(self):
+        """Dumps real-time telemetry to live_state.json for the web dashboard."""
+        try:
+            stage = self.get_current_ladder_stage()
+            st = getattr(self, "survival_tier", evaluate_survival_tier(self.get_total_net_worth()))
+            regime = self.current_regime.get("regime", "UNKNOWN")
+            regime_emoji = self.current_regime.get("emoji", "")
+            nr = getattr(self, "news_report", {})
+
+            positions_list = []
+            for addr, pos in self.active_positions.items():
+                curr = pos.get("peak_price", pos["entry_price"])
+                pnl = ((curr - pos["entry_price"]) / pos["entry_price"]) * 100
+                positions_list.append({
+                    "token": pos["token"],
+                    "invested_inr": pos["invested_inr"],
+                    "entry_price": pos["entry_price"],
+                    "curr_price": curr,
+                    "stop_loss": pos["stop_loss_price"],
+                    "pnl_pct": pnl
+                })
+
+            state = {
+                "net_worth": round(self.get_total_net_worth(), 2),
+                "liquid_cash": round(self.portfolio_inr, 2),
+                "cycle": stage["cycle"],
+                "target_inr": stage["target_inr"],
+                "danger_floor_inr": stage["danger_floor_inr"],
+                "survival_tier": f"{st.emoji} {st.tier}",
+                "regime": f"{regime_emoji} {regime}",
+                "news_sentiment": f"{nr.get('sentiment_label', 'NEUTRAL')} ({nr.get('sentiment_score', 0.0):+.2f})" if nr else "NEUTRAL",
+                "wins": self.wins,
+                "losses": self.losses,
+                "positions": positions_list,
+                "updated_at": time.time()
+            }
+
+            state_file = os.path.join(os.path.dirname(__file__), "live_state.json")
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+        except Exception:
+            pass
+
     async def check_danger_floor(self) -> bool:
         """
         Safety Checkpoint:
@@ -736,6 +779,8 @@ class AutonomousDemoTrader:
             if regime_wr:
                 regime_str = " | ".join(f"{r}: {wr:.0f}%" for r, wr in regime_wr.items())
                 print(f"   Win Rate/Regime: {regime_str}")
+        # Sync real-time state with web dashboard
+        self.dump_live_state()
 
         print("-" * 60)
 
