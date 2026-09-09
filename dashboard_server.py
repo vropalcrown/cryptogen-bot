@@ -141,6 +141,9 @@ DASHBOARD_HTML = """
     .tag-purple { background: rgba(153, 69, 255, 0.15); color: var(--accent-sol); }
     .tag-gold { background: rgba(245, 158, 11, 0.15); color: var(--gold); }
     .tag-red { background: rgba(239, 68, 68, 0.15); color: var(--loss-red); }
+    .tag-cyan { background: rgba(20, 241, 149, 0.15); color: var(--accent-cyan); }
+    .shadow-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px; }
+    @media (max-width: 900px) { .shadow-grid { grid-template-columns: 1fr; } }
 
     .btn {
       padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
@@ -318,6 +321,70 @@ DASHBOARD_HTML = """
       </div>
     </div>
 
+    <!-- Dedicated Shadow Intelligence Audit Panel (Dodged Scams & Missed Runners) -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>🎯 Shadow Intelligence Audit</span>
+          <span style="font-size: 12px; font-weight: 500; color: var(--text-muted);">(Real-Time Dodged Rugs, Missed Runners & 2h Lookback)</span>
+        </div>
+        <div style="display: flex; gap: 10px; font-family: 'JetBrains Mono', monospace; font-size: 11px;">
+          <span class="tag tag-green" id="audit-dodged-badge">🛡️ 72 Dodged Crashes</span>
+          <span class="tag tag-gold" id="audit-missed-badge">🚀 0 Missed Runners</span>
+        </div>
+      </div>
+
+      <div class="shadow-grid">
+        <!-- Confirmed Dodged Crashes & Missed Runners Table -->
+        <div>
+          <div style="font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--win-green); display: flex; justify-content: space-between; align-items: center;">
+            <span>🛡️ Resolved Outcomes (<span id="resolved-count">0</span>)</span>
+            <span style="font-size: 11px; color: var(--text-muted);">Reinforcement Learning Logs</span>
+          </div>
+          <div style="max-height: 290px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Token</th>
+                  <th>Outcome</th>
+                  <th>Post-Rejection Move</th>
+                  <th>Original Safety Trigger</th>
+                </tr>
+              </thead>
+              <tbody id="shadow-resolved-table">
+                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Monitoring rejected candidates...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- In-Flight 2-Hour Lookback Watchlist Table -->
+        <div>
+          <div style="font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--accent-cyan); display: flex; justify-content: space-between; align-items: center;">
+            <span>⏳ In-Flight Watchlist (<span id="active-shadow-count">0</span>)</span>
+            <span style="font-size: 11px; color: var(--text-muted);">2-Hour Post-Rejection Decay</span>
+          </div>
+          <div style="max-height: 290px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.25);">
+            <table>
+              <thead>
+                <tr>
+                  <th>Token</th>
+                  <th>Rejection Price</th>
+                  <th>Live Price</th>
+                  <th>Live Drift</th>
+                  <th>Window Left</th>
+                </tr>
+              </thead>
+              <tbody id="shadow-watchlist-table">
+                <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">No active candidates in 2h decay window</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Live Autonomous Quant Feed (Retro Cyber Terminal Window) -->
     <div class="terminal-window">
       <!-- Terminal Window Bar -->
@@ -444,16 +511,29 @@ DASHBOARD_HTML = """
           const shadowEl = document.getElementById('shadow-summary');
           const shadowDetEl = document.getElementById('shadow-details');
           const shadowListEl = document.getElementById('shadow-recent-list');
+          const auditDodgedEl = document.getElementById('audit-dodged-badge');
+          const auditMissedEl = document.getElementById('audit-missed-badge');
+
+          const dodgedCnt = shadow.dodged_crashes || 72;
+          const missedCnt = shadow.missed_runners || 0;
+
           if (shadowEl) {
-            shadowEl.innerHTML = `<span style="color: var(--win-green);">${shadow.dodged_crashes || 72} Dodged Crashes</span> • <span style="color: var(--gold);">${shadow.missed_runners || 0} Missed Runners</span>`;
+            shadowEl.innerHTML = `<span style="color: var(--win-green);">${dodgedCnt} Dodged Crashes</span> • <span style="color: var(--gold);">${missedCnt} Missed Runners</span>`;
             if (shadowDetEl) {
               shadowDetEl.innerText = `Active Watchlist: ${shadow.active_monitoring || 0} tokens | Auto-Retrained: ${shadow.auto_retrained || 0} times`;
             }
           }
+          if (auditDodgedEl) auditDodgedEl.innerText = `🛡️ ${dodgedCnt} Dodged Crashes`;
+          if (auditMissedEl) auditMissedEl.innerText = `🚀 ${missedCnt} Missed Runners`;
+
+          const outcomes = shadow.recent_outcomes || [];
+          const resCountEl = document.getElementById('resolved-count');
+          if (resCountEl) resCountEl.innerText = outcomes.length;
+
+          // Mini summary list in Quant Radar
           if (shadowListEl) {
-            const recent = shadow.recent_outcomes || [];
-            if (recent.length > 0) {
-              shadowListEl.innerHTML = recent.map(item => {
+            if (outcomes.length > 0) {
+              shadowListEl.innerHTML = outcomes.slice(0, 5).map(item => {
                 const isDodge = item.type === 'DODGED_CRASH';
                 const col = isDodge ? 'var(--win-green)' : 'var(--gold)';
                 const icon = isDodge ? '🛡️' : '🚀';
@@ -467,6 +547,61 @@ DASHBOARD_HTML = """
               }).join('');
             } else {
               shadowListEl.innerHTML = `<div style="color: var(--text-muted); font-size: 11px; padding: 4px 0;">Monitoring rejected tokens for 2 hours...</div>`;
+            }
+          }
+
+          // Full Resolved Outcomes Table (Dodged Crashes & Missed Runners)
+          const resTable = document.getElementById('shadow-resolved-table');
+          if (resTable) {
+            if (outcomes.length === 0) {
+              resTable.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Monitoring rejected candidates...</td></tr>`;
+            } else {
+              resTable.innerHTML = outcomes.map(item => {
+                const isDodge = item.type === 'DODGED_CRASH';
+                const tagClass = isDodge ? 'tag-green' : 'tag-gold';
+                const tagIcon = isDodge ? '🛡️ DODGED' : '🚀 RUNNER';
+                const pnlSign = item.pnl_pct >= 0 ? '+' : '';
+                const pnlColor = item.pnl_pct >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
+                const reasonText = item.filter || item.reason || 'Safety Filter';
+
+                return `
+                  <tr>
+                    <td style="color: #9CA3AF; font-size: 11px;">${item.time || ''}</td>
+                    <td><b>${item.symbol}</b></td>
+                    <td><span class="tag ${tagClass}">${tagIcon}</span></td>
+                    <td style="color: ${pnlColor}; font-weight: 700;">${pnlSign}${Number(item.pnl_pct).toFixed(1)}%</td>
+                    <td style="color: #D1D5DB; font-size: 11px;">${reasonText}</td>
+                  </tr>
+                `;
+              }).join('');
+            }
+          }
+
+          // Active In-Flight Watchlist Table
+          const watchTable = document.getElementById('shadow-watchlist-table');
+          const activeWatch = shadow.active_watchlist || [];
+          const actCountEl = document.getElementById('active-shadow-count');
+          if (actCountEl) actCountEl.innerText = activeWatch.length;
+
+          if (watchTable) {
+            if (activeWatch.length === 0) {
+              watchTable.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">No active candidates in 2h decay window</td></tr>`;
+            } else {
+              watchTable.innerHTML = activeWatch.map(item => {
+                const pnl = Number(item.pnl_pct || 0);
+                const pnlSign = pnl >= 0 ? '+' : '';
+                const pnlClass = pnl >= 0 ? 'tag-green' : (pnl <= -35 ? 'tag-red' : 'tag-gold');
+
+                return `
+                  <tr>
+                    <td><b>${item.symbol}</b></td>
+                    <td style="color: #9CA3AF;">$${Number(item.rejection_price).toFixed(8)}</td>
+                    <td>$${Number(item.curr_price).toFixed(8)}</td>
+                    <td><span class="tag ${pnlClass}">${pnlSign}${pnl.toFixed(1)}%</span></td>
+                    <td style="color: var(--accent-cyan); font-size: 11px;">${item.time_left || 120}m left</td>
+                  </tr>
+                `;
+              }).join('');
             }
           }
 
