@@ -30,6 +30,9 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#07090E">
   <title>CryptoGen v2 — Quant Command Center</title>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
@@ -155,7 +158,7 @@ DASHBOARD_HTML = """
         <div class="logo-badge">⚡</div>
         <div>
           <h1>CRYPTOGEN v2</h1>
-          <div class="sub">Autonomous Solana Micro-Quant Engine • Live 24/7 Cloud Incubation</div>
+          <div class="sub" id="wallet-sub">Autonomous Solana Micro-Quant Engine • Live 24/7 Cloud Incubation</div>
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
@@ -282,6 +285,19 @@ DASHBOARD_HTML = """
           if (dpnlEl) {
             dpnlEl.style.color = dpnl >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
             dpnlEl.innerText = `24h: ${dpnl >= 0 ? '+' : ''}INR ${dpnl.toFixed(2)} (${dpnl >= 0 ? '+' : ''}${dpnlPct.toFixed(1)}%)`;
+          }
+
+          // Burner Wallet & Mode Subheader
+          const pub = data.burner_wallet ? `${data.burner_wallet.slice(0, 6)}...${data.burner_wallet.slice(-6)}` : 'C41pja...QZQZjF';
+          const mode = data.is_live ? 'LIVE ON-CHAIN' : 'PAPER SIMULATION';
+          const solBal = Number(data.live_sol_balance || 0).toFixed(4);
+          const walletSubEl = document.getElementById('wallet-sub');
+          if (walletSubEl) {
+            walletSubEl.innerText = `Burner: ${pub} (${solBal} SOL) • ${mode}`;
+          }
+          const botStatusEl = document.getElementById('bot-status');
+          if (botStatusEl) {
+            botStatusEl.innerText = data.is_paused ? 'PAUSED' : `${mode} • ACTIVE`;
           }
           document.getElementById('cycle-target').innerText = `Cycle #${data.cycle || 1} Goal: INR ${Number(data.target_inr || 1000).toLocaleString()}`;
           document.getElementById('cycle-badge').innerText = `Cycle #${data.cycle || 1}`;

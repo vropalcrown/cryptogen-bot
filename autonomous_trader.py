@@ -257,6 +257,21 @@ class AutonomousDemoTrader:
             self.last_daily_scorecard = time.time()
             self.save_state()
 
+    def refresh_live_balance(self):
+        """Periodically checks on-chain SOL balance of burner wallet."""
+        try:
+            from wallet_manager import check_wallet_balance_onchain
+            if self.executor.wallet_pubkey:
+                bal = check_wallet_balance_onchain(self.executor.wallet_pubkey)
+                new_sol = bal.get("sol", 0.0)
+                if new_sol > 0.001 and self.live_sol_balance <= 0.001:
+                    print(f"\n💰 [ON-CHAIN DEPOSIT DETECTED] Found {new_sol:.4f} SOL in burner wallet!")
+                    self.log_activity("💰", f"Deposit Detected: {new_sol:.4f} SOL on-chain")
+                self.live_sol_balance = new_sol
+                self.is_live = (not PAPER_TRADING) and (self.live_sol_balance > 0.001)
+        except Exception:
+            pass
+
     def dump_live_state(self):
         """Dumps real-time telemetry to live_state.json for the web dashboard."""
         try:
@@ -299,7 +314,10 @@ class AutonomousDemoTrader:
                 "daily_pnl": round(daily_pnl, 2),
                 "daily_pnl_pct": round(daily_pnl_pct, 2),
                 "is_paused": self.is_paused,
-                "activity_feed": getattr(self, "activity_log", [])
+                "activity_feed": getattr(self, "activity_log", []),
+                "burner_wallet": self.executor.wallet_pubkey or "",
+                "live_sol_balance": round(getattr(self, "live_sol_balance", 0.0), 4),
+                "is_live": getattr(self, "is_live", False)
             }
 
             state_file = os.path.join(os.path.dirname(__file__), "live_state.json")
@@ -520,6 +538,7 @@ class AutonomousDemoTrader:
           4. Loads failure pattern weights from journal
         """
         print("\n--- INTELLIGENCE UPDATE ---")
+        self.refresh_live_balance()
 
         # 1. Capital Survival Tier
         self.survival_tier = evaluate_survival_tier(self.get_total_net_worth())
