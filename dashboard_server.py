@@ -208,34 +208,36 @@ DASHBOARD_HTML = """
       </div>
     </header>
 
-    <!-- Top Metrics -->
+    <!-- Top Ledger Metrics: Money Left, Money Invested, Money Made, Fees Paid -->
     <div class="grid">
-      <div class="card">
-        <div class="card-title">Portfolio Net Worth</div>
-        <div class="card-value" id="net-worth" style="color: var(--accent-cyan);">INR 100.00</div>
-        <div class="card-meta" id="daily-pnl" style="color: var(--win-green); font-weight: 600;">24h: +INR 0.00 (+0.0%)</div>
-        <div class="card-meta" id="cycle-target">Cycle #1 Goal: INR 1,000.00</div>
+      <div class="card" style="border-left: 4px solid var(--accent-cyan);">
+        <div class="card-title">💰 Money Left (Liquid Cash)</div>
+        <div class="card-value" id="money-left" style="color: var(--accent-cyan);">INR 100.00</div>
+        <div class="card-meta" id="cycle-target">Cycle #1 Target: INR 1,000.00</div>
         <div class="progress-wrap">
           <div class="progress-fill" id="progress-bar" style="width: 10%;"></div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-title">Compounding Cycle</div>
-        <div class="card-value" id="cycle-badge">Cycle #1</div>
+      <div class="card" style="border-left: 4px solid var(--accent-blue);">
+        <div class="card-title">💼 Money Invested (At Risk)</div>
+        <div class="card-value" id="money-invested" style="color: var(--accent-blue);">INR 0.00</div>
+        <div class="card-meta" id="floating-pnl" style="color: var(--win-green); font-weight: 600;">Floating: +INR 0.00</div>
+        <div class="card-meta" id="pos-count-sub">0 Open Trade(s)</div>
+      </div>
+
+      <div class="card" style="border-left: 4px solid var(--win-green);">
+        <div class="card-title">📈 Money Made (Net Profit)</div>
+        <div class="card-value" id="money-made" style="color: var(--win-green);">+INR 0.00</div>
+        <div class="card-meta" style="color: var(--text-muted);">Added directly to Cash upon trade exit</div>
+        <div class="card-meta" id="record-stats">Record: 0W / 0L</div>
+      </div>
+
+      <div class="card" style="border-left: 4px solid var(--gold);">
+        <div class="card-title">⛽ Fees Paid (DEX & Gas)</div>
+        <div class="card-value" id="fees-paid" style="color: var(--gold);">INR 0.00</div>
+        <div class="card-meta">Solana Gas + 0.3% Raydium AMM</div>
         <div class="card-meta" id="danger-floor">Danger Floor: INR 50.00</div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Survival Tier</div>
-        <div class="card-value" id="survival-tier">🟢 NORMAL</div>
-        <div class="card-meta" id="survival-floor">Floor: $8,000 Pool Liquidity</div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Market Regime</div>
-        <div class="card-value" id="regime-badge">🟠 CRAB</div>
-        <div class="card-meta" id="news-sentiment">News: BEARISH (-0.50)</div>
       </div>
     </div>
 
@@ -426,14 +428,38 @@ DASHBOARD_HTML = """
         const res = await fetch('/api/state');
         if (res.ok) {
           const data = await res.json();
-          document.getElementById('net-worth').innerText = `INR ${Number(data.net_worth || 100).toFixed(2)}`;
-          const dpnl = Number(data.daily_pnl || 0);
-          const dpnlPct = Number(data.daily_pnl_pct || 0);
-          const dpnlEl = document.getElementById('daily-pnl');
-          if (dpnlEl) {
-            dpnlEl.style.color = dpnl >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
-            dpnlEl.innerText = `24h: ${dpnl >= 0 ? '+' : ''}INR ${dpnl.toFixed(2)} (${dpnl >= 0 ? '+' : ''}${dpnlPct.toFixed(1)}%)`;
+          const mLeft = Number(data.money_left !== undefined ? data.money_left : (data.liquid_cash || 100)).toFixed(2);
+          const mInv = Number(data.money_invested !== undefined ? data.money_invested : 0).toFixed(2);
+          const mMade = Number(data.money_made !== undefined ? data.money_made : 0);
+          const feesPaid = Number(data.total_fees_paid !== undefined ? data.total_fees_paid : 0).toFixed(2);
+          const floatPnl = Number(data.floating_pnl_inr !== undefined ? data.floating_pnl_inr : 0);
+
+          const mLeftEl = document.getElementById('money-left');
+          if (mLeftEl) mLeftEl.innerText = `INR ${mLeft}`;
+
+          const mInvEl = document.getElementById('money-invested');
+          if (mInvEl) mInvEl.innerText = `INR ${mInv}`;
+
+          const floatPnlEl = document.getElementById('floating-pnl');
+          if (floatPnlEl) {
+            floatPnlEl.style.color = floatPnl >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
+            floatPnlEl.innerText = `Floating: ${floatPnl >= 0 ? '+' : ''}INR ${floatPnl.toFixed(2)}`;
           }
+
+          const mMadeEl = document.getElementById('money-made');
+          if (mMadeEl) {
+            mMadeEl.style.color = mMade >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
+            mMadeEl.innerText = `${mMade >= 0 ? '+' : ''}INR ${mMade.toFixed(2)}`;
+          }
+
+          const feesEl = document.getElementById('fees-paid');
+          if (feesEl) feesEl.innerText = `INR ${feesPaid}`;
+
+          const recEl = document.getElementById('record-stats');
+          if (recEl) recEl.innerText = `Record: ${data.wins || 0}W / ${data.losses || 0}L`;
+
+          const posCountSub = document.getElementById('pos-count-sub');
+          if (posCountSub) posCountSub.innerText = `${(data.positions || []).length} Open Trade(s)`;
 
           // Burner Wallet & Mode Subheader
           const pub = data.burner_wallet ? `${data.burner_wallet.slice(0, 6)}...${data.burner_wallet.slice(-6)}` : 'C41pja...QZQZjF';
@@ -448,14 +474,12 @@ DASHBOARD_HTML = """
           if (botStatusEl) {
             botStatusEl.innerText = data.is_paused ? 'PAUSED' : `${mode} • ACTIVE`;
           }
-          document.getElementById('cycle-target').innerText = `Cycle #${data.cycle || 1} Goal: INR ${Number(data.target_inr || 1000).toLocaleString()}`;
-          document.getElementById('cycle-badge').innerText = `Cycle #${data.cycle || 1}`;
-          document.getElementById('danger-floor').innerText = `Danger Floor: INR ${Number(data.danger_floor_inr || 50).toFixed(2)}`;
-          document.getElementById('survival-tier').innerText = data.survival_tier || "🟢 NORMAL";
-          document.getElementById('regime-badge').innerText = data.regime || "🟠 CRAB";
-          document.getElementById('news-sentiment').innerText = `News: ${data.news_sentiment || "NEUTRAL"}`;
+          document.getElementById('cycle-target').innerText = `Cycle #${data.cycle || 1} Target: INR ${Number(data.target_inr || 1000).toLocaleString()}`;
+          const dangerFloorEl = document.getElementById('danger-floor');
+          if (dangerFloorEl) dangerFloorEl.innerText = `Danger Floor: INR ${Number(data.danger_floor_inr || 50).toFixed(2)}`;
           
-          const pct = Math.min(100, (Number(data.net_worth || 100) / Number(data.target_inr || 1000)) * 100);
+          const totalCapital = Number(mLeft) + Number(mInv);
+          const pct = Math.min(100, (totalCapital / Number(data.target_inr || 1000)) * 100);
           document.getElementById('progress-bar').style.width = `${pct}%`;
 
           // Positions Table Dynamic Re-render

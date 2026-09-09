@@ -39,6 +39,7 @@ from whale_tracker import WhaleTracker
 from arbitrage_engine import ArbitrageEngine
 from shadow_tracker import ShadowTracker
 from strategy_autotuner import StrategyAutoTuner
+from cloud_vault import load_cloud_state_sync, save_cloud_state_fire_and_forget
 
 BOT_STATE_FILE = os.path.join(os.path.dirname(__file__), "bot_state.json")
 
@@ -77,6 +78,8 @@ class AutonomousDemoTrader:
         self.sol_to_inr = SOL_TO_INR_ESTIMATE
         self.locked_ata_rent_inr = 0.0
         self.active_positions = {}
+        self.realized_profit_inr = 0.0  # Money Made (net of all fees)
+        self.total_fees_paid_inr = 0.0  # Solana Gas + Raydium 0.3% AMM fees
         self.trade_history = []
         self.wins = 0
         self.losses = 0
@@ -134,11 +137,14 @@ class AutonomousDemoTrader:
 
     def load_state(self):
         """Loads persistent portfolio, cycle, and positions state if available across container restarts."""
+        # 1. Load local snapshot if present
         if os.path.exists(BOT_STATE_FILE):
             try:
                 with open(BOT_STATE_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 self.portfolio_inr = float(data.get("portfolio_inr", self.portfolio_inr))
+                self.realized_profit_inr = float(data.get("realized_profit_inr", 0.0))
+                self.total_fees_paid_inr = float(data.get("total_fees_paid_inr", 0.0))
                 self.locked_ata_rent_inr = float(data.get("locked_ata_rent_inr", 0.0))
                 self.active_positions = data.get("active_positions", {})
                 self.wins = int(data.get("wins", 0))
@@ -150,10 +156,33 @@ class AutonomousDemoTrader:
                 self.session_start = float(data.get("session_start", self.session_start))
                 self.daily_start_nw = float(data.get("daily_start_nw", self.get_total_net_worth()))
                 self.last_daily_scorecard = float(data.get("last_daily_scorecard", time.time()))
-                print(f"📦 [STATE RESTORED] Loaded persistent state from {os.path.basename(BOT_STATE_FILE)}:")
-                print(f"   Net Worth: INR {self.get_total_net_worth():.2f} | Positions: {len(self.active_positions)} | Record: {self.wins}W / {self.losses}L | Cycle #{self.current_cycle_idx + 1}")
             except Exception as e:
-                print(f"⚠️ [STATE RESTORE NOTICE] Starting fresh: {e}")
+                print(f"⚠️ [STATE RESTORE NOTICE] Local file notice: {e}")
+
+        # 2. Rehydrate from Cloud Vault (ensures fresh Render containers inherit full live ledger)
+        try:
+            cloud = load_cloud_state_sync()
+            if cloud:
+                if "portfolio_inr" in cloud and float(cloud["portfolio_inr"]) > 0:
+                    self.portfolio_inr = float(cloud["portfolio_inr"])
+                if "realized_profit_inr" in cloud:
+                    self.realized_profit_inr = float(cloud["realized_profit_inr"])
+                if "total_fees_paid_inr" in cloud:
+                    self.total_fees_paid_inr = float(cloud["total_fees_paid_inr"])
+                if "locked_ata_rent_inr" in cloud:
+                    self.locked_ata_rent_inr = float(cloud["locked_ata_rent_inr"])
+                if "active_positions" in cloud and cloud["active_positions"]:
+                    self.active_positions = cloud["active_positions"]
+                if "wins" in cloud:
+                    self.wins = max(self.wins, int(cloud["wins"]))
+                if "losses" in cloud:
+                    self.losses = max(self.losses, int(cloud["losses"]))
+                if "current_cycle_idx" in cloud:
+                    self.current_cycle_idx = int(cloud["current_cycle_idx"])
+        except Exception:
+            pass
+
+        print(f"📦 [STATE RESTORED] Live Ledger: Money Left: INR {self.portfolio_inr:.2f} | Money Made: INR {self.realized_profit_inr:+.2f} | Positions: {len(self.active_positions)}")
 
     def log_activity(self, icon: str, msg: str):
         """Records an action to the live activity feed for dashboard telemetry."""
@@ -169,10 +198,12 @@ class AutonomousDemoTrader:
             self.activity_log.pop()
 
     def save_state(self):
-        """Atomically saves bot state snapshot to disk to survive container restarts."""
+        """Atomically saves bot state snapshot to disk and syncs to Cloud Vault."""
         try:
             data = {
                 "portfolio_inr": round(self.portfolio_inr, 2),
+                "realized_profit_inr": round(getattr(self, "realized_profit_inr", 0.0), 2),
+                "total_fees_paid_inr": round(getattr(self, "total_fees_paid_inr", 0.0), 2),
                 "locked_ata_rent_inr": round(self.locked_ata_rent_inr, 2),
                 "active_positions": self.active_positions,
                 "wins": self.wins,
@@ -190,6 +221,21 @@ class AutonomousDemoTrader:
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp_file, BOT_STATE_FILE)
+
+            # Cloud Vault Fire-and-Forget Sync
+            cloud_payload = {
+                "portfolio_inr": round(self.portfolio_inr, 2),
+                "realized_profit_inr": round(getattr(self, "realized_profit_inr", 0.0), 2),
+                "total_fees_paid_inr": round(getattr(self, "total_fees_paid_inr", 0.0), 2),
+                "locked_ata_rent_inr": round(self.locked_ata_rent_inr, 2),
+                "active_positions": self.active_positions,
+                "wins": self.wins,
+                "losses": self.losses,
+                "current_cycle_idx": self.current_cycle_idx,
+                "dodged_crashes": getattr(self.shadow_tracker, "dodged_crashes", 86) if hasattr(self, "shadow_tracker") else 86,
+                "missed_runners": getattr(self.shadow_tracker, "missed_runners", 0) if hasattr(self, "shadow_tracker") else 0
+            }
+            save_cloud_state_fire_and_forget(cloud_payload)
         except Exception as e:
             print(f"⚠️ [STATE SAVE ERROR] {e}")
 
@@ -309,9 +355,20 @@ class AutonomousDemoTrader:
                     "pnl_pct": pnl
                 })
 
+            invested_total = sum(pos.get("invested_inr", 0.0) for pos in self.active_positions.values())
+            floating_pnl_inr = sum(
+                (pos.get("remaining_tokens", 0.0) * pos.get("curr_price", pos["entry_price"]) * self.sol_to_inr) - pos.get("invested_inr", 0.0)
+                for pos in self.active_positions.values()
+            )
+
             state = {
                 "net_worth": round(total_nw, 2),
                 "liquid_cash": round(self.portfolio_inr, 2),
+                "money_left": round(self.portfolio_inr, 2),
+                "money_invested": round(invested_total, 2),
+                "money_made": round(getattr(self, "realized_profit_inr", 0.0), 2),
+                "total_fees_paid": round(getattr(self, "total_fees_paid_inr", 0.0), 2),
+                "floating_pnl_inr": round(floating_pnl_inr, 2),
                 "cycle": stage["cycle"],
                 "target_inr": stage["target_inr"],
                 "danger_floor_inr": stage["danger_floor_inr"],
@@ -468,20 +525,21 @@ class AutonomousDemoTrader:
                     for p in self.active_positions.values()
                 ]) or "  • None (Cash 100% liquid)"
 
+                m_invested = sum(p["invested_inr"] for p in self.active_positions.values())
                 await send_telegram_alert(
-                    f"📊 *[CRYPTOGEN STATUS REPORT]*\n\n"
-                    f"• *Status:* {pause_status}\n"
-                    f"• *Net Worth:* INR {total_nw:.2f} / Goal: INR {stage['target_inr']:,.0f}\n"
-                    f"• *Liquid Cash:* INR {self.portfolio_inr:.2f}\n"
-                    f"• *Cycle:* #{stage['cycle']} (Danger Floor: INR {stage['danger_floor_inr']:.0f})\n"
-                    f"• *Survival Tier:* {st.emoji} {st.tier}\n"
-                    f"• *Market Regime:* {regime}\n"
+                    f"📊 *[CRYPTOGEN FINANCIAL LEDGER]*\n\n"
+                    f"💰 *Money Left:* INR {self.portfolio_inr:.2f}\n"
+                    f"💼 *Money Invested:* INR {m_invested:.2f}\n"
+                    f"📈 *Money Made (Net Profit):* INR {self.realized_profit_inr:+.2f}\n"
+                    f"⛽ *Total Fees Paid:* INR {self.total_fees_paid_inr:.2f}\n\n"
+                    f"• *Open Trades ({len(self.active_positions)}):*\n{pos_summary}\n\n"
+                    f"• *Cycle #{stage['cycle']}:* Target INR {stage['target_inr']:,.0f} | Danger Floor INR {stage['danger_floor_inr']:.0f}\n"
+                    f"• *Status:* {pause_status} | *Regime:* {regime}\n"
+                    f"• *Record:* {self.wins}W / {self.losses}L\n"
                     f"• *SOL/INR Rate:* ₹{self.sol_to_inr:,.0f}\n"
                     f"• *Dynamic Strategy:* SL: {sl_str} | BE: {be_str} | TP: {tp_str}\n"
                     f"• *Shadow Radar:* {getattr(self, 'shadow_tracker', None).get_summary_stats().get('dodged_crashes', 0) if hasattr(self, 'shadow_tracker') else 0} Dodged | {getattr(self, 'shadow_tracker', None).get_summary_stats().get('missed_runners', 0) if hasattr(self, 'shadow_tracker') else 0} Missed Caught\n"
-                    f"• *News Sentiment:* {nr.get('sentiment_label', 'NEUTRAL')}\n"
-                    f"• *Win Rate:* {self.wins}W / {self.losses}L\n\n"
-                    f"💼 *Open Positions:*\n{pos_summary}"
+                    f"• *News Sentiment:* {nr.get('sentiment_label', 'NEUTRAL')}"
                 )
 
             elif cmd == "/scorecard":
@@ -857,10 +915,14 @@ class AutonomousDemoTrader:
                 print(f"   Kelly sizing INR{size_inr:.2f} below INR5 minimum. Skipping.")
                 continue
 
-            # ATA Rent Reservation
+            # ATA Rent Reservation (Refunded upon sell)
             ata_locked = min(5.0, self.portfolio_inr * 0.05)
+            # Solana Network Gas (~₹0.50) + Raydium 0.3% AMM fee
+            buy_fee_inr = round(0.50 + (size_inr * 0.003), 2)
+
             self.locked_ata_rent_inr += ata_locked
-            self.portfolio_inr -= (size_inr + ata_locked)
+            self.total_fees_paid_inr += buy_fee_inr
+            self.portfolio_inr -= (size_inr + ata_locked + buy_fee_inr)
 
             # Execute On-Chain Swap
             lamports_to_invest = int((size_inr / self.sol_to_inr) * 1_000_000_000)
@@ -872,8 +934,9 @@ class AutonomousDemoTrader:
             )
             if not swap_res.get("success", False):
                 print(f"   Swap failed: {swap_res.get('reason')}. Skipping.")
-                self.portfolio_inr += (size_inr + ata_locked)
+                self.portfolio_inr += (size_inr + ata_locked + buy_fee_inr)
                 self.locked_ata_rent_inr -= ata_locked
+                self.total_fees_paid_inr -= buy_fee_inr
                 continue
 
             self.trade_counter += 1
@@ -923,17 +986,18 @@ class AutonomousDemoTrader:
 
             regime_tag = self.current_regime.get("regime", "?")
             self.save_state()
-            self.log_activity("🚀", f"BUY {symbol} @ ${price:.8f} (INR {size_inr:.2f})")
-            print(f"   [BUY FILLED] {symbol} | Invested: INR{size_inr:.2f} | ATA Rent: INR{ata_locked:.2f} | Regime: {regime_tag}")
+            self.log_activity("🚀", f"BUY {symbol} @ ${price:.8f} (Invested: INR {size_inr:.2f} | Fee: INR {buy_fee_inr:.2f})")
+            print(f"   [BUY FILLED] {symbol} | Invested: INR{size_inr:.2f} | Fee: INR{buy_fee_inr:.2f} | ATA Rent: INR{ata_locked:.2f}")
             print(f"   TX: {swap_res.get('tx_hash')[:32]}...")
             print(f"   Stop Loss: ${price * (1.0 - sl_pct):.8f} (-{int(sl_pct*100)}%) | BE Trigger: +{int((be_mult-1)*100)}%")
-            print(f"   Cash: INR{self.portfolio_inr:.2f} | Net Worth: INR{self.get_total_net_worth():.2f}")
+            print(f"   💰 Money Left: INR{self.portfolio_inr:.2f} | 💼 Invested: INR{size_inr:.2f} | 📈 Money Made: INR{self.realized_profit_inr:+.2f}")
             await send_telegram_alert(
                 f"*[BUY]* {symbol}\n"
                 f"- Invested: INR{size_inr:.2f}\n"
+                f"- Fee Paid: INR{buy_fee_inr:.2f}\n"
                 f"- Confidence: {win_prob*100:.0f}%\n"
-                f"- Regime: {regime_tag}\n"
-                f"- Net Worth: INR{self.get_total_net_worth():.2f}"
+                f"- Money Left: INR{self.portfolio_inr:.2f}\n"
+                f"- Money Made: INR{self.realized_profit_inr:+.2f}"
             )
 
 
@@ -986,14 +1050,19 @@ class AutonomousDemoTrader:
 
             # === Check Stop Loss (Trailing or Hard) ===
             if curr_price <= pos["stop_loss_price"]:
-                recovered_inr = (pos["remaining_tokens"] * curr_price) * self.sol_to_inr
+                gross_recovered = (pos["remaining_tokens"] * curr_price) * self.sol_to_inr
+                sell_fee = round(0.50 + (gross_recovered * 0.003), 2)
+                self.total_fees_paid_inr += sell_fee
+                net_recovered = max(0.0, gross_recovered - sell_fee)
+
                 await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
                 self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
                 refund_ata = pos["ata_locked_inr"]
                 self.locked_ata_rent_inr -= refund_ata
-                self.portfolio_inr += (recovered_inr + refund_ata)
+                self.portfolio_inr += (net_recovered + refund_ata)
 
-                loss = pos["invested_inr"] - recovered_inr
+                loss = max(0.0, pos["invested_inr"] - net_recovered)
+                self.realized_profit_inr -= loss
                 self.losses += 1
 
                 # === NEW: Get current volume for journal ===
@@ -1024,12 +1093,15 @@ class AutonomousDemoTrader:
                     market_regime=pos.get("regime_at_entry", "UNKNOWN")
                 )
 
-                print(f"   [STOP LOSS] {pos['token']} sold @ {pnl_pct:+.1f}%. Loss: -INR{loss:.2f} (ATA Refund: +INR{refund_ata:.2f})")
+                self.save_state()
+                print(f"   [STOP LOSS] {pos['token']} sold @ {pnl_pct:+.1f}%. Net Loss: -INR{loss:.2f} (Fee: INR{sell_fee:.2f} | ATA Refund: +INR{refund_ata:.2f})")
+                print(f"   💰 Money Left: INR{self.portfolio_inr:.2f} | 📈 Money Made: INR{self.realized_profit_inr:+.2f}")
                 await send_telegram_alert(
                     f"*[STOP LOSS]* {pos['token']} ({pnl_pct:+.1f}%)\n"
-                    f"- Loss: -INR{loss:.2f}\n"
-                    f"- Reason: {category}\n"
-                    f"- Cash: INR{self.portfolio_inr:.2f}"
+                    f"- Net Loss: -INR{loss:.2f}\n"
+                    f"- Fee: INR{sell_fee:.2f}\n"
+                    f"- Money Left: INR{self.portfolio_inr:.2f}\n"
+                    f"- Total Money Made: INR{self.realized_profit_inr:+.2f}"
                 )
 
                 # === NEW: Learn with failure category ===
@@ -1042,18 +1114,32 @@ class AutonomousDemoTrader:
                 if not stage["hit"] and curr_price >= stage["price"]:
                     tokens_to_sell = pos["initial_tokens"] * stage["ratio"]
                     tokens_to_sell = min(tokens_to_sell, pos["remaining_tokens"])
-                    proceeds = (tokens_to_sell * curr_price) * self.sol_to_inr
+                    gross_proceeds = (tokens_to_sell * curr_price) * self.sol_to_inr
+                    sell_fee = round(0.50 + (gross_proceeds * 0.003), 2)
+                    self.total_fees_paid_inr += sell_fee
+                    net_proceeds = max(0.0, gross_proceeds - sell_fee)
+
                     await self.executor.execute_swap(addr, SOL_MINT, int(tokens_to_sell * 1_000_000), paper_mode=(not self.is_live))
-                    self.portfolio_inr += proceeds
+                    self.portfolio_inr += net_proceeds
+
+                    # Calculate net profit gained on this partial exit
+                    invested_part = pos["invested_inr"] * (tokens_to_sell / pos["initial_tokens"])
+                    profit_gain = net_proceeds - invested_part
+                    self.realized_profit_inr += profit_gain
+
                     pos["remaining_tokens"] -= tokens_to_sell
                     stage["hit"] = True
                     pos["tp_stages_hit"] = pos.get("tp_stages_hit", 0) + 1
                     self.save_state()
-                    print(f"   [TP {stage['mult']}x HIT] Sold {stage['ratio']*100:.0f}% of {pos['token']}. Locked: +INR{proceeds:.2f}")
+                    print(f"   [TP {stage['mult']}x HIT] Sold {stage['ratio']*100:.0f}% of {pos['token']}. Cash Added: +INR{net_proceeds:.2f} (Fee: INR{sell_fee:.2f}) | Profit: +INR{profit_gain:.2f}")
+                    print(f"   💰 Money Left: INR{self.portfolio_inr:.2f} | 📈 Money Made: INR{self.realized_profit_inr:+.2f}")
                     await send_telegram_alert(
                         f"*[TAKE PROFIT {stage['mult']}x]* {pos['token']}\n"
-                        f"- Locked: +INR{proceeds:.2f}\n"
-                        f"- Net Worth: INR{self.get_total_net_worth():.2f}"
+                        f"- Cash Added: +INR{net_proceeds:.2f}\n"
+                        f"- Net Profit Made: +INR{profit_gain:.2f}\n"
+                        f"- Fee: INR{sell_fee:.2f}\n"
+                        f"- Money Left: INR{self.portfolio_inr:.2f}\n"
+                        f"- Total Money Made: INR{self.realized_profit_inr:+.2f}"
                     )
 
             # If all tokens sold via TP stages
@@ -1111,12 +1197,13 @@ class AutonomousDemoTrader:
         nr = getattr(self, "news_report", {})
         news_str = f"{nr.get('sentiment_label', 'NEUTRAL')} ({nr.get('sentiment_score', 0.0):+.2f})" if nr else "N/A"
 
+        m_invested = sum(pos.get("invested_inr", 0.0) for pos in self.active_positions.values())
         print("\n" + "-" * 60)
-        print(f" PORTFOLIO: INR {total_nw:.2f} | CYCLE #{stage['cycle']} GOAL: INR {cycle_target:,.0f}")
-        print(f"   Liquid Cash    : INR {self.portfolio_inr:.2f}")
-        print(f"   ATA Locked     : INR {self.locked_ata_rent_inr:.2f} (Refundable)")
-        print(f"   Open Positions : {len(self.active_positions)}")
-        print(f"   Win Rate       : {win_rate:.1f}% ({self.wins}W / {self.losses}L)")
+        print(f" 💰 MONEY LEFT : INR {self.portfolio_inr:.2f} | 💼 INVESTED: INR {m_invested:.2f} | 📈 MADE: INR {self.realized_profit_inr:+.2f}")
+        print(f"   DEX Fees Paid  : INR {self.total_fees_paid_inr:.2f} (Solana Gas + 0.3% Raydium AMM)")
+        print(f"   ATA Rent Locked: INR {self.locked_ata_rent_inr:.2f} (100% Refundable on exit)")
+        print(f"   Open Positions : {len(self.active_positions)} (Cycle #{stage['cycle']} Target: INR {cycle_target:,.0f})")
+        print(f"   Record         : {self.wins}W / {self.losses}L (Win Rate: {win_rate:.1f}%)")
         print(f"   Danger Floor   : {danger_status}")
         print(f"   Survival Tier  : {st.emoji} {st.tier} (Floor: ${st.min_liquidity_usd:,.0f})")
         print(f"   Market Regime  : {regime_emoji} {regime}")
