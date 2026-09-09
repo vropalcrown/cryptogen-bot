@@ -34,7 +34,7 @@ def evaluate_survival_tier(net_worth_inr: float) -> SurvivalTierConfig:
             tier="EXPANSION",
             emoji="💎🚀",
             min_confidence=0.70,
-            max_position_pct=0.20,
+            max_position_pct=0.25,
             max_concurrent_trades=2,
             min_liquidity_usd=10000.0,
             description="Compounding profits. Multiple positions permitted."
@@ -44,20 +44,20 @@ def evaluate_survival_tier(net_worth_inr: float) -> SurvivalTierConfig:
             tier="NORMAL",
             emoji="🟢🎯",
             min_confidence=0.75,
-            max_position_pct=0.20,
+            max_position_pct=0.25,
             max_concurrent_trades=1,
             min_liquidity_usd=8000.0,
-            description="Nominal operation. Strict sniper entry."
+            description="Nominal operation. Strict sniper entry (25% optimal size)."
         )
     elif net_worth_inr >= 50.0:
         return SurvivalTierConfig(
             tier="DEFENSE",
             emoji="🟡🛡️",
             min_confidence=0.85,
-            max_position_pct=0.10,  # Halve position size to conserve capital
+            max_position_pct=0.22,  # 22% optimal size to defeat Solana gas fee drag
             max_concurrent_trades=1,
             min_liquidity_usd=15000.0,  # Require deeper pools to reduce slippage
-            description="Capital conservation. Position size halved. High conviction bar."
+            description="Capital conservation. 22% optimal sizing. High conviction bar (85%+)."
         )
     else:
         return SurvivalTierConfig(

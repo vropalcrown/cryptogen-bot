@@ -655,20 +655,21 @@ class AutonomousDemoTrader:
                 )
 
     def calculate_kelly_position_size(self, win_probability: float) -> float:
-        """Kelly sizing adjusted by survival tier and market regime multiplier."""
+        """Kelly sizing adjusted by survival tier and Monte Carlo optimal floor (INR 20-25)."""
         tradeable_cash = max(0.0, self.portfolio_inr - EMERGENCY_RESERVE_INR)
-        if tradeable_cash < 5.0:
+        if tradeable_cash < 15.0:
             return 0.0
 
-        # Survival Tier Cap (halves risk in DEFENSE mode)
+        # Survival Tier Cap
         tier_cfg = evaluate_survival_tier(self.get_total_net_worth())
         max_cap = tier_cfg.max_position_pct
 
+        # Fractional Kelly adjusted for 20-25% optimal Monte Carlo sizing
         kelly_size = calculate_fractional_kelly_size(
             win_probability=win_probability,
             portfolio_inr=self.portfolio_inr,
             reward_to_risk_ratio=3.33,
-            fraction=0.25,
+            fraction=0.45,
             max_cap_pct=max_cap
         )
 
@@ -676,7 +677,9 @@ class AutonomousDemoTrader:
         regime_mult = self.current_regime.get("kelly_multiplier", 1.0)
         kelly_size *= regime_mult
 
-        return min(kelly_size, tradeable_cash)
+        # Enforce Monte Carlo optimal floor (INR 20.00 so Solana gas fee is never >5%)
+        optimal_size = max(20.0, kelly_size)
+        return min(optimal_size, tradeable_cash)
 
     async def update_intelligence(self):
         """
@@ -967,8 +970,8 @@ class AutonomousDemoTrader:
 
             # Position Sizing via Kelly (regime-adjusted)
             size_inr = self.calculate_kelly_position_size(win_prob)
-            if size_inr < 5.0:
-                print(f"   Kelly sizing INR{size_inr:.2f} below INR5 minimum. Skipping.")
+            if size_inr < 15.0:
+                print(f"   Position sizing INR{size_inr:.2f} below INR15 minimum. Skipping.")
                 continue
 
             # ATA Rent Reservation (Refunded upon sell)
