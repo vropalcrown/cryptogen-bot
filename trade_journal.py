@@ -47,6 +47,7 @@ class TradeJournal:
                 self.entries = []
 
     def _save(self):
+        self.entries = self.entries[-200:]
         with open(JOURNAL_FILE, "w", encoding="utf-8") as f:
             json.dump(self.entries, f, indent=2, ensure_ascii=False)
 

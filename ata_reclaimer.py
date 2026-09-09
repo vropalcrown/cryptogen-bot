@@ -95,7 +95,7 @@ class ATARentReclaimer:
 
             # Build and send transaction
             # Fetch recent blockhash
-            res = httpx.post(self.rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash"})
+            res = httpx.post(self.rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash"}, timeout=10.0)
             blockhash_str = res.json()["result"]["value"]["blockhash"]
             from solders.hash import Hash
             recent_blockhash = Hash.from_string(blockhash_str)
@@ -110,7 +110,7 @@ class ATARentReclaimer:
                 "id": 1,
                 "method": "sendTransaction",
                 "params": [raw_b64, {"encoding": "base64"}]
-            })
+            }, timeout=10.0)
             tx_hash = send_res.json().get("result")
             print(f"💰 [ATA RENT RECLAIMED] 0.002039 SOL refunded! TX: {tx_hash}")
             return {"success": True, "tx_hash": tx_hash, "reclaimed_sol": 0.00203928}

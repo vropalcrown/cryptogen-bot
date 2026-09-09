@@ -317,6 +317,8 @@ class CryptoGenBrain:
         if os.path.exists(MEMORY_FILE):
             full_df = pd.read_csv(MEMORY_FILE)
             full_df = pd.concat([full_df, recency_df], ignore_index=True)
+            if len(full_df) > 6000:
+                full_df = full_df.tail(6000)
         else:
             full_df = recency_df
 
