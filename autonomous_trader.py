@@ -914,6 +914,13 @@ class AutonomousDemoTrader:
                 ]
             }
 
+            if hasattr(self, "shadow_tracker"):
+                self.shadow_tracker.shadow_tokens.pop(addr, None)
+                # Remove from recent_outcomes if previously recorded erroneously
+                self.shadow_tracker.recent_outcomes = [
+                    o for o in self.shadow_tracker.recent_outcomes if o.get("symbol") != symbol
+                ]
+
             regime_tag = self.current_regime.get("regime", "?")
             self.save_state()
             self.log_activity("🚀", f"BUY {symbol} @ ${price:.8f} (INR {size_inr:.2f})")
@@ -1206,7 +1213,8 @@ async def run_autonomous_simulation_loop():
 
             # 3.5 Shadow Watchlist: Evaluate post-rejection outcomes (False Negatives & Dodged Rugs)
             if hasattr(trader, "shadow_tracker"):
-                shadow_event = await trader.shadow_tracker.update_shadow_tokens()
+                active_addrs = set(trader.active_positions.keys())
+                shadow_event = await trader.shadow_tracker.update_shadow_tokens(active_addrs=active_addrs)
                 if shadow_event:
                     if shadow_event["type"] == "MISSED_RUNNER":
                         trader.log_activity("🚀", f"Missed runner: {shadow_event['symbol']} +{shadow_event['pnl_pct']:.0f}% (Brain retrained)")

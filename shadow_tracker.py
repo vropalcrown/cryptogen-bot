@@ -152,12 +152,21 @@ class ShadowTracker:
         }
         self.save_state()
 
-    async def update_shadow_tokens(self) -> Optional[dict]:
+    async def update_shadow_tokens(self, active_addrs: set = None) -> dict:
         """
-        Periodically inspects a batch of shadow tokens to track performance.
-        Returns notification details if a significant event (runner or crash) was resolved.
+        Periodically checks prices of rejected tokens:
+        - If price surged >= +50% and liquidity >= $5k: triggers ML Brain learning for 'missed runner'
+        - If price dropped <= -35% or liquidity dropped < $1k: confirms successful dodge
+        - Removes tokens that are currently active positions in the bot
         """
         now = time.time()
+
+        # Clean out any tokens that were actively bought by the trader
+        if active_addrs:
+            for active_addr in active_addrs:
+                if active_addr in self.shadow_tokens:
+                    self.shadow_tokens.pop(active_addr, None)
+
         active_items = [
             (addr, t) for addr, t in self.shadow_tokens.items()
             if t.get("status") == "MONITORING"
@@ -174,16 +183,26 @@ class ShadowTracker:
 
         for addr, item in batch:
             try:
+                # If coin is now an active position, remove from shadow watchlist
+                if active_addrs and addr in active_addrs:
+                    self.shadow_tokens.pop(addr, None)
+                    continue
+
                 live_data = await fetch_dex_token_data(addr)
                 item["last_checked_time"] = now
 
+                # Do NOT declare a -100% crash if it was just a transient API failure
+                if not live_data:
+                    continue
+
                 entry_p = item["rejection_price"]
-                if not live_data or live_data.get("price_usd", 0) <= 0:
-                    curr_p = 0.0
-                    liq = 0.0
-                else:
-                    curr_p = live_data["price_usd"]
-                    liq = live_data.get("liquidity_usd", 0.0)
+                curr_p = float(live_data.get("price_usd", 0.0) or 0.0)
+                liq = float(live_data.get("liquidity_usd", 0.0) or 0.0)
+
+                if curr_p <= 0.0:
+                    item["zero_count"] = item.get("zero_count", 0) + 1
+                    if item["zero_count"] < 2:
+                        continue  # Must confirm at least twice before declaring -100% dump
 
                 item["last_checked_price"] = curr_p
                 item["peak_price"] = max(item["peak_price"], curr_p)
