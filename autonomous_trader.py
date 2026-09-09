@@ -708,106 +708,148 @@ class AutonomousDemoTrader:
         min_pool_liq = self.survival_tier.min_liquidity_usd if hasattr(self, "survival_tier") else 5000.0
         print(f"   [THRESHOLD] Entry bar: {entry_threshold*100:.0f}% (Regime: {regime_threshold*100:.0f}%, Survival: {survival_min_conf*100:.0f}%, Min Liq: ${min_pool_liq:,.0f})")
 
-        for addr in candidate_addresses:
+        # Stage 1: Concurrent Pre-Filter with Semaphore(4) rate limiting
+        semaphore = asyncio.Semaphore(4)
+        evaluated_candidates = []
+
+        async def pre_evaluate_candidate(addr: str):
             if addr in self.active_positions:
-                continue
+                return None
+
+            async with semaphore:
+                try:
+                    live_data = await fetch_dex_token_data(addr)
+                    if not live_data or live_data.get("price_usd", 0) <= 0:
+                        return None
+
+                    name = live_data["name"]
+                    symbol = live_data["symbol"]
+                    price = live_data["price_usd"]
+                    liq = live_data["liquidity_usd"]
+
+                    # Filter 0: Survival Tier Pool Liquidity Check
+                    if liq < min_pool_liq:
+                        return None
+
+                    # Filter 1: Basic Safety (RugCheck / DexScreener / Dev Bundler)
+                    safety = await analyze_token_safety(addr, live_data)
+                    if not safety["safe"]:
+                        reason_clean = safety['reason'][:35]
+                        self.log_activity("⚠️", f"Filtered {symbol}: {reason_clean}")
+                        if hasattr(self, "shadow_tracker"):
+                            feats = extract_features_from_token_data(live_data)
+                            self.shadow_tracker.register_rejected_token(
+                                address=addr,
+                                symbol=symbol,
+                                name=name,
+                                price=price,
+                                reason=f"Safety: {reason_clean}",
+                                features=feats,
+                                win_prob=0.10
+                            )
+                        return None
+
+                    # Filter 2: Wash Trading & Manipulation Detection
+                    wash = live_data.get("wash_analysis", {})
+                    if wash.get("manipulated", False):
+                        self.log_activity("🚫", f"Filtered {symbol}: Wash trading (Score {wash['wash_score']})")
+                        return None
+
+                    # Filter 3: AMM Price Impact
+                    trade_sol = 20.0 / self.sol_to_inr
+                    pool_sol = liq / 140.0
+                    price_impact = calculate_amm_price_impact(trade_sol, pool_sol)
+                    if price_impact > 0.03:
+                        self.log_activity("📉", f"Filtered {symbol}: Price impact {price_impact*100:.1f}% too high")
+                        return None
+
+                    # Filter 4: Feature Extraction & ML Prediction
+                    features = extract_features_from_token_data(live_data)
+                    meta_bonus = self.meta_tracker.get_meta_bonus(name, symbol)
+                    win_prob = self.brain.predict_win_probability(
+                        features, meta_bonus=meta_bonus, journal_weights=self.journal_weights
+                    )
+                    whale_bonus = self.whale_tracker.get_whale_bonus(addr)
+                    if whale_bonus > 0:
+                        win_prob = min(0.99, win_prob + whale_bonus)
+
+                    cand = {
+                        "addr": addr,
+                        "live_data": live_data,
+                        "features": features,
+                        "win_prob": win_prob,
+                        "meta_bonus": meta_bonus,
+                        "whale_bonus": whale_bonus,
+                        "name": name,
+                        "symbol": symbol,
+                        "price": price,
+                        "liq": liq
+                    }
+                    evaluated_candidates.append(cand)
+
+                    # Filter 5: ML Entry Threshold Check
+                    if win_prob < entry_threshold:
+                        if hasattr(self, "shadow_tracker"):
+                            self.shadow_tracker.register_rejected_token(
+                                address=addr,
+                                symbol=symbol,
+                                name=name,
+                                price=price,
+                                reason=f"Confidence {win_prob*100:.0f}% < {entry_threshold*100:.0f}%",
+                                features=features,
+                                win_prob=win_prob
+                            )
+                        return None
+
+                    # Candidate passed all filters!
+                    return cand
+                except Exception:
+                    return None
+
+        print(f"   [SCAN] Scanning {len(candidate_addresses)} candidates concurrently (Worker pool: 4)...")
+        tasks = [pre_evaluate_candidate(addr) for addr in candidate_addresses]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        qualified = [r for r in results if isinstance(r, dict) and r is not None]
+        # Sort surviving candidates by win probability descending (best trade first)
+        qualified.sort(key=lambda c: c["win_prob"], reverse=True)
+
+        if qualified:
+            print(f"   [SCAN RESULT] 🎯 {len(qualified)}/{len(candidate_addresses)} candidate(s) passed all safety checks and ML threshold ({entry_threshold*100:.0f}%).")
+        else:
+            closest_info = ""
+            if evaluated_candidates:
+                top_cand = max(evaluated_candidates, key=lambda c: c["win_prob"])
+                closest_info = f" | Closest: {top_cand['symbol']} ({top_cand['win_prob']*100:.1f}%)"
+            print(f"   [SCAN RESULT] 0/{len(candidate_addresses)} candidates passed entry bar ({entry_threshold*100:.0f}%){closest_info}. Capital 100% preserved.")
+
+        # Stage 2: Sequential Execution & Capital Allocation (Guarantees zero double-spend race condition)
+        for candidate in qualified:
             if len(self.active_positions) >= max_concurrent:
                 break
 
-            live_data = await fetch_dex_token_data(addr)
-            if not live_data or live_data.get("price_usd", 0) <= 0:
+            addr = candidate["addr"]
+            if addr in self.active_positions:
                 continue
 
-            name = live_data["name"]
-            symbol = live_data["symbol"]
-            price = live_data["price_usd"]
-            liq = live_data["liquidity_usd"]
+            symbol = candidate["symbol"]
+            name = candidate["name"]
+            price = candidate["price"]
+            liq = candidate["liq"]
+            win_prob = candidate["win_prob"]
+            features = candidate["features"]
+            meta_bonus = candidate["meta_bonus"]
+            whale_bonus = candidate["whale_bonus"]
+            live_data = candidate["live_data"]
 
-            # Filter 0: Survival Tier Pool Liquidity Check
-            if liq < min_pool_liq:
-                print(f"   [SURVIVAL LIQ] {symbol}: Pool ${liq:,.0f} < ${min_pool_liq:,.0f} tier floor. Skipped.")
-                self.log_activity("🛡️", f"Filtered {symbol}: Pool ${liq:,.0f} < ${min_pool_liq:,.0f} floor")
-                continue
-
-            # Filter 1: Basic Safety (RugCheck / DexScreener)
-            safety = await analyze_token_safety(addr, live_data)
-            if not safety["safe"]:
-                reason_clean = safety['reason'][:35]
-                # Journal says tighten safety? Extra penalty
-                if self.journal_weights.get("safety_strictness", 1.0) > 1.0:
-                    print(f"   [SAFETY+] {symbol}: {safety['reason']}. STRICTLY Skipped.")
-                else:
-                    print(f"   [SAFETY] {symbol}: {safety['reason']}. Skipped.")
-                self.log_activity("⚠️", f"Filtered {symbol}: {reason_clean}")
-                if hasattr(self, "shadow_tracker"):
-                    feats = extract_features_from_token_data(live_data)
-                    self.shadow_tracker.register_rejected_token(
-                        address=addr,
-                        symbol=symbol,
-                        name=name,
-                        price=price,
-                        reason=f"Safety: {reason_clean}",
-                        features=feats,
-                        win_prob=0.10
-                    )
-                continue
-
-            # Filter 2: Wash Trading & Manipulation Detection
-            wash = live_data.get("wash_analysis", {})
-            if wash.get("manipulated", False):
-                print(f"   [MANIPULATION] {symbol}: Wash trading (Score {wash['wash_score']}). Skipped.")
-                self.log_activity("🚫", f"Filtered {symbol}: Wash trading (Score {wash['wash_score']})")
-                continue
-
-            # Filter 3: AMM Price Impact
-            trade_sol = 20.0 / self.sol_to_inr
-            pool_sol = liq / 140.0
-            price_impact = calculate_amm_price_impact(trade_sol, pool_sol)
-            if price_impact > 0.03:
-                print(f"   [SLIPPAGE] {symbol}: Price impact {price_impact*100:.2f}% > 3.0%. Skipped.")
-                self.log_activity("📉", f"Filtered {symbol}: Price impact {price_impact*100:.1f}% too high")
-                continue
-
-            # Filter 4: Feature Extraction & ML Prediction
-            features = extract_features_from_token_data(live_data)
-
-            # === NEW: Meta bonus for hot narrative tokens ===
-            meta_bonus = self.meta_tracker.get_meta_bonus(name, symbol)
-
-            # === NEW: Enhanced prediction with meta + journal + whale ===
-            win_prob = self.brain.predict_win_probability(
-                features, meta_bonus=meta_bonus, journal_weights=self.journal_weights
-            )
-
-            # Smart Money / Whale Tracker Bonus
-            whale_bonus = self.whale_tracker.get_whale_bonus(addr)
-            if whale_bonus > 0:
-                win_prob = min(0.99, win_prob + whale_bonus)
-
-            print(f"\n   [EVALUATING] {symbol} (${price:.8f}) | Liq: ${liq:,.0f}")
+            print(f"\n   [EVALUATING QUALIFIED] {symbol} (${price:.8f}) | Liq: ${liq:,.0f}")
             print(f"   Buy Ratio (5m): {features['buy_ratio_5m']*100:.1f}% | OFI: {features['ofi_5m']:+.2f} | Vol Accel: {features['vol_acceleration']:.2f}x")
             if meta_bonus > 0:
                 meta_cats = self.meta_tracker.classify_token(name, symbol)
                 print(f"   Meta Bonus: +{meta_bonus*100:.0f}% ({', '.join(meta_cats)})")
             if whale_bonus > 0:
                 print(f"   🐋 Whale Bonus: +{whale_bonus*100:.0f}% (Tracked Smart Money Accumulated)")
-            print(f"   ML Confidence: {win_prob*100:.1f}% (Need: {entry_threshold*100:.0f}%)")
-
-            # Entry Check with adaptive threshold
-            if win_prob < entry_threshold:
-                print(f"   Confidence {win_prob*100:.1f}% < {entry_threshold*100:.0f}%. Skipping.")
-                self.log_activity("🧠", f"Evaluated {symbol}: {win_prob*100:.0f}% < {entry_threshold*100:.0f}% bar")
-                if hasattr(self, "shadow_tracker"):
-                    self.shadow_tracker.register_rejected_token(
-                        address=addr,
-                        symbol=symbol,
-                        name=name,
-                        price=price,
-                        reason=f"Confidence {win_prob*100:.0f}% < {entry_threshold*100:.0f}%",
-                        features=features,
-                        win_prob=win_prob
-                    )
-                continue
+            print(f"   ML Confidence: {win_prob*100:.1f}% (Required: {entry_threshold*100:.0f}%)")
 
             # Position Sizing via Kelly (regime-adjusted)
             size_inr = self.calculate_kelly_position_size(win_prob)
@@ -852,7 +894,7 @@ class AutonomousDemoTrader:
                 "token": symbol,
                 "name": name,
                 "entry_price": price,
-                "peak_price": price,  # NEW: Track peak for journal
+                "peak_price": price,  # Track peak for journal
                 "invested_inr": size_inr,
                 "ata_locked_inr": ata_locked,
                 "remaining_tokens": tokens_bought,
@@ -861,10 +903,10 @@ class AutonomousDemoTrader:
                 "features": features,
                 "stop_loss_price": price * (1.0 - sl_pct),
                 "breakeven_trigger": be_mult,
-                "entry_time": time.time(),  # NEW: Track hold duration
-                "entry_volume": live_data.get("volume_1h", 0),  # NEW: Volume at entry
-                "regime_at_entry": self.current_regime.get("regime", "UNKNOWN"),  # NEW
-                "tp_stages_hit": 0,  # NEW: Count TP stages
+                "entry_time": time.time(),
+                "entry_volume": live_data.get("volume_1h", 0),
+                "regime_at_entry": self.current_regime.get("regime", "UNKNOWN"),
+                "tp_stages_hit": 0,
                 "tp_stages": [
                     {"mult": tp1, "price": price * tp1, "ratio": tp1_ratio, "hit": False},
                     {"mult": tp2, "price": price * tp2, "ratio": tp2_ratio, "hit": False},
@@ -886,6 +928,7 @@ class AutonomousDemoTrader:
                 f"- Regime: {regime_tag}\n"
                 f"- Net Worth: INR{self.get_total_net_worth():.2f}"
             )
+
 
     async def update_market_ticks(self, price_dict: dict):
         """
@@ -1157,8 +1200,8 @@ async def run_autonomous_simulation_loop():
             ]
             candidates = list(dict.fromkeys(trending + popular_tokens))
 
-            # 3. Scan & execute candidate trades (Virtual or Live) across up to 25 candidates
-            await trader.scan_and_trade(candidates[:25])
+            # 3. Scan & execute candidate trades (Virtual or Live) across up to 45 candidates
+            await trader.scan_and_trade(candidates[:45])
             trader.display_dashboard()
 
             # 3.5 Shadow Watchlist: Evaluate post-rejection outcomes (False Negatives & Dodged Rugs)

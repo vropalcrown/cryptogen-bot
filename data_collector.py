@@ -129,7 +129,7 @@ async def fetch_trending_solana_tokens() -> list:
         try:
             res = await client.get("https://api.dexscreener.com/token-profiles/latest/v1")
             if res.status_code == 200:
-                for item in res.json()[:10]:
+                for item in res.json()[:20]:
                     if item.get("chainId") == "solana" and item.get("tokenAddress"):
                         candidates.append(item["tokenAddress"])
         except Exception:
@@ -137,4 +137,4 @@ async def fetch_trending_solana_tokens() -> list:
 
     # Deduplicate preserving order
     unique_candidates = list(dict.fromkeys(candidates))
-    return unique_candidates[:30]
+    return unique_candidates[:50]
