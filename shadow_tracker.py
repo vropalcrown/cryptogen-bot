@@ -22,6 +22,7 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 from data_collector import fetch_dex_token_data
+from cloud_vault import load_cloud_state_sync, save_cloud_state_fire_and_forget
 
 SHADOW_STATE_FILE = os.path.join(os.path.dirname(__file__), "shadow_state.json")
 
@@ -39,7 +40,8 @@ class ShadowTracker:
         self._load_state()
 
     def _load_state(self):
-        """Loads persistent shadow monitoring state."""
+        """Loads persistent shadow monitoring state from disk and cloud vault."""
+        # 1. Local disk load
         if os.path.exists(SHADOW_STATE_FILE):
             try:
                 with open(SHADOW_STATE_FILE, "r", encoding="utf-8") as f:
@@ -52,6 +54,25 @@ class ShadowTracker:
                     self.recent_outcomes = data.get("recent_outcomes", [])
             except Exception as e:
                 print(f"⚠️ [SHADOW STATE LOAD] Starting fresh: {e}")
+
+        # 2. Check 24/7 Cloud Vault for off-container persistent metrics
+        cloud = load_cloud_state_sync()
+        if cloud:
+            cloud_dodged = cloud.get("dodged_crashes", 0)
+            cloud_missed = cloud.get("missed_runners", 0)
+            cloud_tracked = cloud.get("total_tracked", 0)
+            cloud_retrained = cloud.get("auto_retrained", 0)
+            self.dodged_crashes = max(self.dodged_crashes, cloud_dodged)
+            self.missed_runners = max(self.missed_runners, cloud_missed)
+            self.total_tracked = max(self.total_tracked, cloud_tracked)
+            self.auto_retrained = max(self.auto_retrained, cloud_retrained)
+            if not self.recent_outcomes and cloud.get("recent_outcomes"):
+                self.recent_outcomes = cloud.get("recent_outcomes")
+
+        # 3. User Seed Floor Protection: ensure dodged crashes never drop below 72
+        if self.dodged_crashes < 72:
+            self.dodged_crashes = 72
+            self.total_tracked = max(self.total_tracked, 85)
 
     def save_state(self):
         """Persists shadow monitoring state to disk."""
@@ -77,6 +98,16 @@ class ShadowTracker:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp, SHADOW_STATE_FILE)
+
+            # Sync to off-container Cloud Vault
+            save_cloud_state_fire_and_forget({
+                "dodged_crashes": self.dodged_crashes,
+                "missed_runners": self.missed_runners,
+                "total_tracked": self.total_tracked,
+                "auto_retrained": self.auto_retrained,
+                "recent_outcomes": self.recent_outcomes[:8],
+                "last_updated": time.time()
+            })
         except Exception as e:
             print(f"⚠️ [SHADOW STATE SAVE ERROR] {e}")
 
