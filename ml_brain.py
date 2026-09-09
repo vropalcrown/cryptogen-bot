@@ -63,10 +63,10 @@ class CryptoGenBrain:
             try:
                 with open(BRAIN_STATE_FILE, "r") as f:
                     state = json.load(f)
-                    self.adaptive_threshold = state.get("adaptive_threshold", 0.65)
-                    self.recent_accuracy = state.get("recent_accuracy", 0.5)
-                    self.consecutive_losses = state.get("consecutive_losses", 0)
-                    self.consecutive_wins = state.get("consecutive_wins", 0)
+                    self.adaptive_threshold = min(0.75, state.get("adaptive_threshold", 0.70))
+                    self.recent_accuracy = state.get("recent_accuracy", 0.65)
+                    self.consecutive_losses = 0  # Reset stale streaks on load
+                    self.consecutive_wins = 0
                     self.total_real_trades = state.get("total_real_trades", 0)
                     self.prediction_history = state.get("prediction_history", [])
                     self.feature_importance = state.get("feature_importance", {})
@@ -245,13 +245,13 @@ class CryptoGenBrain:
         """
         base = regime_threshold if regime_threshold else self.adaptive_threshold
 
-        # After 3+ consecutive losses, raise the bar by 5% each
+        # After 3+ consecutive real trade losses, raise the bar slightly (capped at 80%)
         if self.consecutive_losses >= 3:
-            base = min(0.95, base + 0.05 * (self.consecutive_losses - 2))
+            base = min(0.80, base + 0.03 * min(self.consecutive_losses - 2, 2))
 
         # After 3+ consecutive wins, slightly lower the bar
         if self.consecutive_wins >= 3:
-            base = max(0.50, base - 0.03)
+            base = max(0.55, base - 0.03)
 
         return round(base, 2)
 
@@ -265,7 +265,9 @@ class CryptoGenBrain:
           - Streak tracking
           - Cross-validation check after retrain
         """
-        self.total_real_trades += 1
+        is_shadow = trade_category in ("CONFIRMED_DODGE", "MISSED_RUNNER")
+        if not is_shadow:
+            self.total_real_trades += 1
 
         # Track prediction vs outcome
         self.prediction_history.append({
@@ -275,30 +277,32 @@ class CryptoGenBrain:
             "category": trade_category
         })
 
-        # Update streaks
-        if was_winner:
-            self.consecutive_wins += 1
-            self.consecutive_losses = 0
-        else:
-            self.consecutive_losses += 1
-            self.consecutive_wins = 0
+        # Update streaks (ONLY for real executed portfolio trades, NEVER for shadow dodges)
+        if not is_shadow:
+            if was_winner:
+                self.consecutive_wins += 1
+                self.consecutive_losses = 0
+            else:
+                self.consecutive_losses += 1
+                self.consecutive_wins = 0
 
         # === Adaptive threshold adjustment ===
-        # Recalculate recent accuracy from last 10 trades
-        recent = self.prediction_history[-10:]
+        # Recalculate recent accuracy from real executed trades
+        real_history = [p for p in self.prediction_history if p.get("category") not in ("CONFIRMED_DODGE", "MISSED_RUNNER")]
+        recent = real_history[-10:]
         if len(recent) >= 5:
             correct = sum(1 for p in recent if p["actual_win"])
             self.recent_accuracy = correct / len(recent)
 
-            # If accuracy < 40%, raise threshold (be pickier)
+            # If accuracy < 40%, raise threshold slightly (max 78%)
             if self.recent_accuracy < 0.40:
-                self.adaptive_threshold = min(0.90, self.adaptive_threshold + 0.03)
+                self.adaptive_threshold = min(0.78, self.adaptive_threshold + 0.02)
                 print(f"   🧠 [ADAPTING] Low accuracy ({self.recent_accuracy*100:.0f}%). "
                       f"Raising threshold to {self.adaptive_threshold*100:.0f}%")
 
             # If accuracy > 70%, slightly lower threshold (more trades)
             elif self.recent_accuracy > 0.70:
-                self.adaptive_threshold = max(0.55, self.adaptive_threshold - 0.02)
+                self.adaptive_threshold = max(0.60, self.adaptive_threshold - 0.02)
                 print(f"   🧠 [ADAPTING] High accuracy ({self.recent_accuracy*100:.0f}%). "
                       f"Lowering threshold to {self.adaptive_threshold*100:.0f}%")
 
