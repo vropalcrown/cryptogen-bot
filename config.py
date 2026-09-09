@@ -44,7 +44,7 @@ SOL_TO_INR_ESTIMATE = 13000.0   # Current approximate SOL/INR exchange rate
 PERSONAL_WITHDRAWAL_WALLET = os.getenv("PERSONAL_SOLANA_WALLET", "")
 
 MAX_POSITION_PERCENT = 0.20     # Rule 1: Max 20% per trade
-STOP_LOSS_PERCENT = 0.30        # Rule 2: -30% stop loss
+STOP_LOSS_PERCENT = 0.10        # Rule 2: -10% stop loss (Monte Carlo #1: 91.2% Success Rate)
 EMERGENCY_RESERVE_INR = 15.0    # Rule 6: ₹15 reserve locked for gas
 MAX_SLIPPAGE_BPS = 100          # 1.0% slippage (100 basis points)
 
@@ -53,9 +53,9 @@ MIN_LIQUIDITY_USD = 5000.0
 MAX_TOP_HOLDER_PERCENT = 15.0
 MIN_SAFETY_SCORE = 70.0
 
-# Staged TP Ratios: [price_multiplier, percent_of_initial_tokens_to_sell]
+# Staged TP Ratios (Monte Carlo #1 Optimized Ladder):
 TAKE_PROFIT_STAGES = [
-    {"mult": 2.0, "sell_ratio": 0.40},  # Sell 40% at 2x
-    {"mult": 5.0, "sell_ratio": 0.30},  # Sell 30% at 5x
-    {"mult": 10.0, "sell_ratio": 0.30}  # Sell remaining 30% at 10x
+    {"mult": 1.25, "sell_ratio": 0.50},  # Sell 50% at +25% (Secures initial capital)
+    {"mult": 1.60, "sell_ratio": 0.30},  # Sell 30% at +60% (Momentum profit lock)
+    {"mult": 3.00, "sell_ratio": 0.20}   # Sell last 20% at +200% (Moonshot runner)
 ]

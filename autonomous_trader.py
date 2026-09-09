@@ -829,7 +829,7 @@ class AutonomousDemoTrader:
             self.log_activity("🚀", f"BUY {symbol} @ ${price:.8f} (INR {size_inr:.2f})")
             print(f"   [BUY FILLED] {symbol} | Invested: INR{size_inr:.2f} | ATA Rent: INR{ata_locked:.2f} | Regime: {regime_tag}")
             print(f"   TX: {swap_res.get('tx_hash')[:32]}...")
-            print(f"   Stop Loss: ${price * (1.0 - STOP_LOSS_PERCENT):.8f} (-30%)")
+            print(f"   Stop Loss: ${price * (1.0 - STOP_LOSS_PERCENT):.8f} (-{int(STOP_LOSS_PERCENT*100)}%)")
             print(f"   Cash: INR{self.portfolio_inr:.2f} | Net Worth: INR{self.get_total_net_worth():.2f}")
             await send_telegram_alert(
                 f"*[BUY]* {symbol}\n"
@@ -858,21 +858,27 @@ class AutonomousDemoTrader:
             entry = pos["entry_price"]
             peak_gain_pct = ((peak - entry) / entry) * 100
 
-            # Dynamic Trailing Stop-Loss Escalator:
-            # Tier 3 (5x+ Moonshot): Trail 20% below peak
-            if peak >= entry * 5.0:
+            # Monte Carlo #1 Trailing Stop Escalator:
+            # Tier 4 (3x+ Moonshot): Trail 20% below peak
+            if peak >= entry * 3.0:
                 trailing_stop = peak * 0.80
                 if trailing_stop > pos["stop_loss_price"]:
                     pos["stop_loss_price"] = trailing_stop
                     print(f"   📈 [TRAILING STOP ESCALATED] {pos['token']}: Locked at ${trailing_stop:.8f} (80% of ${peak:.8f} peak)")
-            # Tier 2 (2x Double): Trail 25% below peak
+            # Tier 3 (2x Double): Trail 15% below peak
             elif peak >= entry * 2.0:
-                trailing_stop = peak * 0.75
+                trailing_stop = peak * 0.85
                 if trailing_stop > pos["stop_loss_price"]:
                     pos["stop_loss_price"] = trailing_stop
-                    print(f"   📈 [TRAILING STOP ESCALATED] {pos['token']}: Locked at ${trailing_stop:.8f} (75% of ${peak:.8f} peak)")
-            # Tier 1 (+30% Surge): Move stop-loss to Break-Even (entry price)
-            elif peak >= entry * 1.30:
+                    print(f"   📈 [TRAILING STOP ESCALATED] {pos['token']}: Locked at ${trailing_stop:.8f} (85% of ${peak:.8f} peak)")
+            # Tier 2 (+50% Surge): Trail 12% below peak
+            elif peak >= entry * 1.50:
+                trailing_stop = peak * 0.88
+                if trailing_stop > pos["stop_loss_price"]:
+                    pos["stop_loss_price"] = trailing_stop
+                    print(f"   📈 [TRAILING STOP ESCALATED] {pos['token']}: Locked at ${trailing_stop:.8f} (88% of ${peak:.8f} peak)")
+            # Tier 1 (+20% Surge): Move stop-loss to Break-Even (entry price)
+            elif peak >= entry * 1.20:
                 if entry > pos["stop_loss_price"]:
                     pos["stop_loss_price"] = entry
                     print(f"   🛡️ [BREAK-EVEN RATCHET] {pos['token']}: Stop-loss moved to entry price ${entry:.8f} (Zero Risk Locked)")
@@ -919,9 +925,9 @@ class AutonomousDemoTrader:
                     market_regime=pos.get("regime_at_entry", "UNKNOWN")
                 )
 
-                print(f"   [STOP LOSS] {pos['token']} sold @ -30%. Loss: -INR{loss:.2f} (ATA Refund: +INR{refund_ata:.2f})")
+                print(f"   [STOP LOSS] {pos['token']} sold @ -{int(STOP_LOSS_PERCENT*100)}%. Loss: -INR{loss:.2f} (ATA Refund: +INR{refund_ata:.2f})")
                 await send_telegram_alert(
-                    f"*[STOP LOSS]* {pos['token']}\n"
+                    f"*[STOP LOSS]* {pos['token']} (-{int(STOP_LOSS_PERCENT*100)}%)\n"
                     f"- Loss: -INR{loss:.2f}\n"
                     f"- Reason: {category}\n"
                     f"- Cash: INR{self.portfolio_inr:.2f}"
