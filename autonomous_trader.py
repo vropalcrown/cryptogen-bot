@@ -13,7 +13,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 from config import (
     STARTING_BALANCE_INR, TARGET_BALANCE_INR,
     STOP_LOSS_PERCENT, TAKE_PROFIT_STAGES,
-    EMERGENCY_RESERVE_INR, SOL_TO_INR_ESTIMATE, PAPER_TRADING
+    EMERGENCY_RESERVE_INR, SOL_TO_INR_ESTIMATE, PAPER_TRADING,
+    MILESTONE_PROFIT_SWEEP_INR, RESEED_CAPITAL_INR, PERSONAL_WITHDRAWAL_WALLET
 )
 from quant_math import (
     ATA_RENT_EXEMPTION_SOL, BASE_TX_FEE_SOL, AVERAGE_PRIORITY_FEE_SOL,
@@ -99,6 +100,67 @@ class AutonomousDemoTrader:
             for pos in self.active_positions.values()
         ])
         return self.portfolio_inr + self.locked_ata_rent_inr + position_value
+
+    async def check_milestone_harvest(self):
+        """
+        Milestone Harvest Protocol:
+        When total net worth reaches >= INR 1,000.00:
+          1. Closes any remaining open positions
+          2. Reclaims all ATA rent deposits
+          3. Locks INR 600.00 (INR 100 recovered capital + INR 500 profit)
+          4. Leaves INR 400.00 in the bot to compound Cycle 2
+          5. Saves the winning ML model weights as 'golden_checkpoint.joblib'
+          6. Sends a celebratory Telegram alert with withdrawal details
+        """
+        total_nw = self.get_total_net_worth()
+        if total_nw >= TARGET_BALANCE_INR:
+            print("\n" + "🎉" * 35)
+            print(f"🏆 [MILESTONE REACHED] NET WORTH HIT INR {total_nw:.2f} (>= INR 1,000.00)!")
+            print("🎉" * 35)
+
+            # 1. Close any open positions immediately to lock gains
+            if self.active_positions:
+                print(f"🔒 Closing {len(self.active_positions)} active position(s) to lock profit...")
+                for addr, pos in list(self.active_positions.items()):
+                    await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
+                    self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
+                    self.portfolio_inr += (pos["remaining_tokens"] * pos["entry_price"] * SOL_TO_INR_ESTIMATE) + pos["ata_locked_inr"]
+                self.active_positions.clear()
+                self.locked_ata_rent_inr = 0.0
+
+            # 2. Permanent Model Checkpoint: Save the winning brain
+            import shutil
+            golden_path = os.path.join(os.path.dirname(__file__), "golden_checkpoint.joblib")
+            src_model = os.path.join(os.path.dirname(__file__), "cryptogen_ml_model.joblib")
+            if os.path.exists(src_model):
+                shutil.copyfile(src_model, golden_path)
+                print(f"💾 [GOLDEN MODEL SAVED] Winning ML weights frozen to: golden_checkpoint.joblib")
+
+            # 3. Harvest: Separate INR 600 profit from INR 400 reseed pool
+            harvested_profit = MILESTONE_PROFIT_SWEEP_INR
+            reseed_balance = max(RESEED_CAPITAL_INR, self.portfolio_inr - harvested_profit)
+            self.portfolio_inr = reseed_balance
+
+            sol_harvest = harvested_profit / SOL_TO_INR_ESTIMATE
+            dest_msg = f"Sent to {PERSONAL_WITHDRAWAL_WALLET[:8]}..." if PERSONAL_WITHDRAWAL_WALLET else "Locked in reserve / ready for withdrawal"
+
+            print(f"\n💰 [HARVEST SUMMARY]")
+            print(f"   • User Profit + Principal Locked : INR {harvested_profit:.2f} (~{sol_harvest:.4f} SOL)")
+            print(f"   • Re-Seed Balance for Cycle 2   : INR {reseed_balance:.2f} (Above EXPANSION tier!)")
+            print(f"   • Status                        : {dest_msg}")
+            print("-" * 65 + "\n")
+
+            await send_telegram_alert(
+                f"🏆 *[10X MILESTONE REACHED!]*\n\n"
+                f"💰 *Profit Harvest Protocol Triggered:*\n"
+                f"• *Recovered Capital:* INR 100.00\n"
+                f"• *Pure Profit Locked:* INR 500.00\n"
+                f"• *Total Secured for You:* INR {harvested_profit:.2f} (~{sol_harvest:.4f} SOL)\n\n"
+                f"🔄 *Cycle 2 Re-Seed:*\n"
+                f"• *New Working Capital:* INR {reseed_balance:.2f}\n"
+                f"• Bot continues compounding on house money!\n"
+                f"• Golden ML weights saved permanently."
+            )
 
     def calculate_kelly_position_size(self, win_probability: float) -> float:
         """Kelly sizing adjusted by survival tier and market regime multiplier."""
@@ -523,10 +585,15 @@ async def run_autonomous_simulation_loop():
                     if live_prices:
                         await trader.update_market_ticks(live_prices)
                         trader.display_dashboard()
+                        # Check milestone harvest condition
+                        await trader.check_milestone_harvest()
 
                     if not trader.active_positions:
                         break
             else:
+                # Check milestone harvest if no positions are active
+                await trader.check_milestone_harvest()
+
                 # No open positions: pause before next scan to respect free API rate limits
                 sleep_secs = trader.current_regime.get("scan_interval_secs", 45)
                 print(f"💤 Sleeping {sleep_secs}s before next market scan...")

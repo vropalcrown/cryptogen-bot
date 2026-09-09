@@ -15,6 +15,11 @@ STARTING_BALANCE_INR = 100.0
 TARGET_BALANCE_INR = 1000.0
 SOL_TO_INR_ESTIMATE = 13000.0   # Current approximate SOL/INR exchange rate
 
+# Milestone Harvest Protocol (At INR 1000)
+MILESTONE_PROFIT_SWEEP_INR = 600.0  # INR 100 initial capital recovered + INR 500 profit locked
+RESEED_CAPITAL_INR = 400.0          # INR 400 remains in the bot to compound Cycle 2
+PERSONAL_WITHDRAWAL_WALLET = os.getenv("PERSONAL_SOLANA_WALLET", "")  # User's personal cold wallet
+
 MAX_POSITION_PERCENT = 0.20     # Rule 1: Max 20% per trade
 STOP_LOSS_PERCENT = 0.30        # Rule 2: -30% stop loss
 EMERGENCY_RESERVE_INR = 15.0    # Rule 6: ₹15 reserve locked for gas
