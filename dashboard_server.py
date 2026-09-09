@@ -979,6 +979,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             state = {
                 "net_worth": 100.0,
+                "liquid_cash": 100.0,
+                "money_left": 100.0,
+                "money_invested": 0.0,
+                "money_made": 0.0,
+                "total_fees_paid": 0.0,
+                "floating_pnl_inr": 0.0,
                 "cycle": 1,
                 "target_inr": 1000.0,
                 "danger_floor_inr": 50.0,
@@ -996,19 +1002,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
+            # Fetch cloud backup to ensure persistence across Render container restarts
+            cloud = load_cloud_state_sync()
+            if cloud:
+                if "money_left" not in state and "portfolio_inr" in cloud:
+                    state["money_left"] = float(cloud["portfolio_inr"])
+                    state["liquid_cash"] = float(cloud["portfolio_inr"])
+                if "money_made" not in state and "realized_profit_inr" in cloud:
+                    state["money_made"] = float(cloud["realized_profit_inr"])
+                if "total_fees_paid" not in state and "total_fees_paid_inr" in cloud:
+                    state["total_fees_paid"] = float(cloud["total_fees_paid_inr"])
+                if ("positions" not in state or not state["positions"]) and cloud.get("active_positions"):
+                    cl_pos = cloud["active_positions"]
+                    if isinstance(cl_pos, dict):
+                        state["positions"] = list(cl_pos.values())
+                    elif isinstance(cl_pos, list):
+                        state["positions"] = cl_pos
+
             # Persistence Safeguard: Never serve reset or zeroed shadow metrics
             cur_shadow = state.get("shadow_stats") or {}
             if cur_shadow.get("dodged_crashes", 0) < 72:
-                cloud = load_cloud_state_sync()
-                cloud_dodged = cloud.get("dodged_crashes", 72)
-                cloud_tracked = cloud.get("total_tracked", 85)
+                cloud_dodged = cloud.get("dodged_crashes", 72) if cloud else 72
+                cloud_tracked = cloud.get("total_tracked", 85) if cloud else 85
                 state["shadow_stats"] = {
                     "active_monitoring": cur_shadow.get("active_monitoring", 0),
                     "total_tracked": max(cloud_tracked, 85),
                     "dodged_crashes": max(cloud_dodged, 72),
-                    "missed_runners": cloud.get("missed_runners", 0),
-                    "auto_retrained": cloud.get("auto_retrained", 0),
-                    "recent_outcomes": cloud.get("recent_outcomes", [])
+                    "missed_runners": cloud.get("missed_runners", 0) if cloud else 0,
+                    "auto_retrained": cloud.get("auto_retrained", 0) if cloud else 0,
+                    "recent_outcomes": cloud.get("recent_outcomes", []) if cloud else []
                 }
 
             # Persistence Safeguard for Transactions Ledger

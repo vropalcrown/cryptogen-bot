@@ -235,6 +235,7 @@ class AutonomousDemoTrader:
                 })
 
         print(f"📦 [STATE RESTORED] Live Ledger: Money Left: INR {self.portfolio_inr:.2f} | Money Made: INR {self.realized_profit_inr:+.2f} | Positions: {len(self.active_positions)} | Transactions: {len(self.trade_history)}")
+        self.dump_live_state()
 
     def log_activity(self, icon: str, msg: str):
         """Records an action to the live activity feed for dashboard telemetry."""
