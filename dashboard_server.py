@@ -245,6 +245,16 @@ DASHBOARD_HTML = """
           </div>
           <hr style="border: 0; border-top: 1px solid var(--card-border);">
           <div>
+            <div class="card-title">🎯 Shadow Intelligence (Lookback Engine)</div>
+            <div style="font-size: 14px; font-weight: 700; color: var(--accent-cyan);" id="shadow-summary">
+              0 Dodged Crashes • 0 Missed Runners
+            </div>
+            <div class="card-meta" id="shadow-details">
+              Tracking rejected tokens for 2h post-rejection to retrain ML brain.
+            </div>
+          </div>
+          <hr style="border: 0; border-top: 1px solid var(--card-border);">
+          <div>
             <div class="card-title">Active Alpha Systems</div>
             <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
               <span class="tag tag-purple">🐋 Smart Money Tracker</span>
@@ -253,6 +263,7 @@ DASHBOARD_HTML = """
               <span class="tag tag-green">🛡️ Anti-Fake-News RPC Proof</span>
               <span class="tag tag-purple">📈 Dynamic Trailing Escalator</span>
               <span class="tag tag-gold">⚖️ Triangular Arbitrage Gate</span>
+              <span class="tag tag-green">🎯 False-Negative Shadow Radar</span>
             </div>
           </div>
         </div>
@@ -331,6 +342,15 @@ DASHBOARD_HTML = """
                 </tr>
               `;
             }).join('');
+          // Shadow Watchlist Dynamic Re-render
+          const shadow = data.shadow_stats || {};
+          const shadowEl = document.getElementById('shadow-summary');
+          const shadowDetEl = document.getElementById('shadow-details');
+          if (shadowEl && shadow.total_tracked !== undefined) {
+            shadowEl.innerHTML = `<span style="color: var(--win-green);">${shadow.dodged_crashes || 0} Dodged Crashes</span> • <span style="color: var(--gold);">${shadow.missed_runners || 0} Missed Runners</span>`;
+            if (shadowDetEl) {
+              shadowDetEl.innerText = `Active Watchlist: ${shadow.active_monitoring || 0} tokens | Auto-Retrained: ${shadow.auto_retrained || 0} times`;
+            }
           }
 
           // Live Activity Feed Dynamic Re-render

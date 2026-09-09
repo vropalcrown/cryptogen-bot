@@ -37,6 +37,7 @@ from survival_engine import evaluate_survival_tier
 from news_sentinel import NewsSentinel
 from whale_tracker import WhaleTracker
 from arbitrage_engine import ArbitrageEngine
+from shadow_tracker import ShadowTracker
 
 BOT_STATE_FILE = os.path.join(os.path.dirname(__file__), "bot_state.json")
 
@@ -55,6 +56,7 @@ class AutonomousDemoTrader:
         self.news_sentinel = NewsSentinel()
         self.whale_tracker = WhaleTracker()
         self.arbitrage_engine = ArbitrageEngine()
+        self.shadow_tracker = ShadowTracker(brain=self.brain)
 
         # === Regime state (will be updated before first trade) ===
         self.current_regime = {
@@ -228,6 +230,11 @@ class AutonomousDemoTrader:
 
         progress = min(100.0, (total_nw / stage["target_inr"]) * 100)
 
+        sh_stats = self.shadow_tracker.get_summary_stats() if hasattr(self, "shadow_tracker") else {}
+        shadow_line = ""
+        if sh_stats:
+            shadow_line = f"\n🎯 *Shadow Intelligence:* {sh_stats.get('dodged_crashes', 0)} Dodged Crashes | {sh_stats.get('missed_runners', 0)} Missed Runners"
+
         message = (
             f"{header_prefix}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -242,7 +249,8 @@ class AutonomousDemoTrader:
             f"🛡️ *Survival Tier:* {st.emoji} {st.tier}\n"
             f"🧠 *Brain Accuracy:* {self.brain.recent_accuracy*100:.0f}% (Threshold: {self.brain.adaptive_threshold*100:.0f}%)\n"
             f"⏳ *Incubation Uptime:* {uptime_str}"
-            f"{journal_stats}\n"
+            f"{journal_stats}"
+            f"{shadow_line}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🤖 *Status:* Autonomous 24/7 Cloud Incubation Active."
         )
@@ -319,6 +327,7 @@ class AutonomousDemoTrader:
                 "burner_wallet": self.executor.wallet_pubkey or "",
                 "live_sol_balance": round(getattr(self, "live_sol_balance", 0.0), 4),
                 "sol_to_inr": round(getattr(self, "sol_to_inr", 13000.0), 2),
+                "shadow_stats": self.shadow_tracker.get_summary_stats() if hasattr(self, "shadow_tracker") else {},
                 "is_live": getattr(self, "is_live", False)
             }
 
@@ -461,6 +470,7 @@ class AutonomousDemoTrader:
                     f"• *Survival Tier:* {st.emoji} {st.tier}\n"
                     f"• *Market Regime:* {regime}\n"
                     f"• *SOL/INR Rate:* ₹{self.sol_to_inr:,.0f}\n"
+                    f"• *Shadow Radar:* {getattr(self, 'shadow_tracker', None).get_summary_stats().get('dodged_crashes', 0) if hasattr(self, 'shadow_tracker') else 0} Dodged | {getattr(self, 'shadow_tracker', None).get_summary_stats().get('missed_runners', 0) if hasattr(self, 'shadow_tracker') else 0} Missed Caught\n"
                     f"• *News Sentiment:* {nr.get('sentiment_label', 'NEUTRAL')}\n"
                     f"• *Win Rate:* {self.wins}W / {self.losses}L\n\n"
                     f"💼 *Open Positions:*\n{pos_summary}"
@@ -693,6 +703,17 @@ class AutonomousDemoTrader:
                 else:
                     print(f"   [SAFETY] {symbol}: {safety['reason']}. Skipped.")
                 self.log_activity("⚠️", f"Filtered {symbol}: {reason_clean}")
+                if hasattr(self, "shadow_tracker"):
+                    feats = extract_features_from_token_data(live_data)
+                    self.shadow_tracker.register_rejected_token(
+                        address=addr,
+                        symbol=symbol,
+                        name=name,
+                        price=price,
+                        reason=f"Safety: {reason_clean}",
+                        features=feats,
+                        win_prob=0.10
+                    )
                 continue
 
             # Filter 2: Wash Trading & Manipulation Detection
@@ -740,6 +761,16 @@ class AutonomousDemoTrader:
             if win_prob < entry_threshold:
                 print(f"   Confidence {win_prob*100:.1f}% < {entry_threshold*100:.0f}%. Skipping.")
                 self.log_activity("🧠", f"Evaluated {symbol}: {win_prob*100:.0f}% < {entry_threshold*100:.0f}% bar")
+                if hasattr(self, "shadow_tracker"):
+                    self.shadow_tracker.register_rejected_token(
+                        address=addr,
+                        symbol=symbol,
+                        name=name,
+                        price=price,
+                        reason=f"Confidence {win_prob*100:.0f}% < {entry_threshold*100:.0f}%",
+                        features=features,
+                        win_prob=win_prob
+                    )
                 continue
 
             # Position Sizing via Kelly (regime-adjusted)
@@ -1071,6 +1102,23 @@ async def run_autonomous_simulation_loop():
             # 3. Scan & execute candidate trades (Virtual or Live)
             await trader.scan_and_trade(candidates[:10])
             trader.display_dashboard()
+
+            # 3.5 Shadow Watchlist: Evaluate post-rejection outcomes (False Negatives & Dodged Rugs)
+            if hasattr(trader, "shadow_tracker"):
+                shadow_event = await trader.shadow_tracker.update_shadow_tokens()
+                if shadow_event:
+                    if shadow_event["type"] == "MISSED_RUNNER":
+                        trader.log_activity("🚀", f"Missed runner: {shadow_event['symbol']} +{shadow_event['pnl_pct']:.0f}% (Brain retrained)")
+                        clean_reason = shadow_event['rejection_reason'].replace('_', ' ')
+                        await send_telegram_alert(
+                            f"🧠 🚀 *[SHADOW INTELLIGENCE — MISSED RUNNER]*\n\n"
+                            f"• *Token:* {shadow_event['symbol']}\n"
+                            f"• *Surge:* +{shadow_event['pnl_pct']:.1f}%\n"
+                            f"• *Original Filter:* {clean_reason}\n\n"
+                            f"🎯 *Auto-Retraining:* The ML Brain has retroactively studied this coin's features with winning weights to prevent future false negatives!"
+                        )
+                    elif shadow_event["type"] == "DODGED_CRASH":
+                        trader.log_activity("🛡️", f"Dodged dump: {shadow_event['symbol']} {shadow_event['pnl_pct']:.0f}% (Safety validated)")
 
             # 4. Monitor active positions (if any are held)
             if trader.active_positions:
