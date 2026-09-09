@@ -36,6 +36,7 @@ from meta_tracker import MetaTracker
 from survival_engine import evaluate_survival_tier
 from news_sentinel import NewsSentinel
 from whale_tracker import WhaleTracker
+from arbitrage_engine import ArbitrageEngine
 
 
 class AutonomousDemoTrader:
@@ -51,6 +52,7 @@ class AutonomousDemoTrader:
         self.meta_tracker = MetaTracker()
         self.news_sentinel = NewsSentinel()
         self.whale_tracker = WhaleTracker()
+        self.arbitrage_engine = ArbitrageEngine()
 
         # === Regime state (will be updated before first trade) ===
         self.current_regime = {
@@ -347,10 +349,15 @@ class AutonomousDemoTrader:
         if whale_activity:
             print(f"   🐋 Whale Tracker: {len(whale_activity)} active smart money transaction(s) detected!")
 
-        # 6. Journal Insights
+        # 6. Triangular Arbitrage Engine (Shadow/Live)
+        arb_opps = await self.arbitrage_engine.scan_arbitrage_opportunities(self.get_total_net_worth())
+        arb_status = "LIVE ACTIVE" if self.arbitrage_engine.is_unlocked else "SHADOW SCAN (Unlocks @ ₹50k)"
+        print(f"   ⚖️ Arbitrage Engine: {arb_status} | Found: {len(arb_opps)} route(s)")
+
+        # 7. Journal Insights
         self.journal_weights = self.journal.get_failure_pattern_weights()
 
-        # 7. Brain Status
+        # 8. Brain Status
         print(f"   {self.brain.get_brain_status()}")
         print("---")
 
@@ -717,6 +724,8 @@ class AutonomousDemoTrader:
         print(f"   Survival Tier  : {st.emoji} {st.tier} (Floor: ${st.min_liquidity_usd:,.0f})")
         print(f"   Market Regime  : {regime_emoji} {regime}")
         print(f"   News Sentiment : 📰 {news_str}")
+        arb_mode = "LIVE ACTIVE" if self.arbitrage_engine.is_unlocked else "SHADOW (Unlocks @ ₹50k)"
+        print(f"   Arbitrage Gate : ⚖️ {arb_mode}")
         print(f"   Brain Accuracy : {self.brain.recent_accuracy*100:.0f}% | Threshold: {self.brain.adaptive_threshold*100:.0f}%")
         bar_len = int(progress // 5)
         print(f"   Cycle Metric   : [{'#' * bar_len}{'-' * (20 - bar_len)}] {progress:.1f}%")
