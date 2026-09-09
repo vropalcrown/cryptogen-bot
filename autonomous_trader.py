@@ -34,6 +34,7 @@ from trade_journal import TradeJournal
 from market_regime import MarketRegimeDetector
 from meta_tracker import MetaTracker
 from survival_engine import evaluate_survival_tier
+from news_sentinel import NewsSentinel
 
 
 class AutonomousDemoTrader:
@@ -47,6 +48,7 @@ class AutonomousDemoTrader:
         self.journal = TradeJournal()
         self.regime_detector = MarketRegimeDetector()
         self.meta_tracker = MetaTracker()
+        self.news_sentinel = NewsSentinel()
 
         # === Regime state (will be updated before first trade) ===
         self.current_regime = {
@@ -253,16 +255,24 @@ class AutonomousDemoTrader:
         print(f"   {regime.get('emoji', '')} Market Regime: {regime['regime']} "
               f"(Confidence: {regime.get('confidence', 0)*100:.0f}%) — {regime.get('description', '')}")
 
-        # 3. Meta Tracker (every cycle, cached)
+        # 3. Real-Time News Sentinel
+        self.news_report = await self.news_sentinel.analyze_market_news()
+        nr = self.news_report
+        news_emoji = "🟢" if nr["sentiment_label"] == "BULLISH" else ("🔴" if nr["sentiment_label"] == "BEARISH" else "⚪")
+        print(f"   📰 News Sentiment: {news_emoji} {nr['sentiment_label']} (Score: {nr['sentiment_score']:+.2f}) | {nr['headline_count']} headlines")
+        if nr.get("news_narratives"):
+            print(f"   Trending in News: {', '.join(nr['news_narratives'])}")
+
+        # 4. Meta Tracker (every cycle, cached)
         meta = await self.meta_tracker.scan_trending_meta()
         if self.meta_tracker.hot_categories:
             top3 = self.meta_tracker.hot_categories[:3]
             print(f"   Hot Meta: {' > '.join(top3)}")
 
-        # 4. Journal Insights
+        # 5. Journal Insights
         self.journal_weights = self.journal.get_failure_pattern_weights()
 
-        # 5. Brain Status
+        # 6. Brain Status
         print(f"   {self.brain.get_brain_status()}")
         print("---")
 
@@ -270,6 +280,13 @@ class AutonomousDemoTrader:
         # Check Danger Floor (Cycle safety limit)
         if await self.check_danger_floor():
             print(f"   [HALT] Danger Floor active. Trading halted to preserve seed.")
+            return
+
+        # Check News Panic Circuit Breaker (Solana outage, critical exploit, etc.)
+        if getattr(self, "news_report", {}).get("panic_halt", False):
+            reason = self.news_report.get("panic_reason", "Critical news event")
+            print(f"   [NEWS HALT] 🚨 Breaking news circuit breaker triggered: {reason}")
+            await send_telegram_alert(f"🚨 *[NEWS CIRCUIT BREAKER]*\n• Trading paused due to breaking news: {reason}")
             return
 
         # Check regime — if CRASH, halt all new trades
@@ -574,6 +591,9 @@ class AutonomousDemoTrader:
 
         danger_status = "⚠️ FROZEN" if self.is_danger_halted else f"INR {stage['danger_floor_inr']:.0f}"
 
+        nr = getattr(self, "news_report", {})
+        news_str = f"{nr.get('sentiment_label', 'NEUTRAL')} ({nr.get('sentiment_score', 0.0):+.2f})" if nr else "N/A"
+
         print("\n" + "-" * 60)
         print(f" PORTFOLIO: INR {total_nw:.2f} | CYCLE #{stage['cycle']} GOAL: INR {cycle_target:,.0f}")
         print(f"   Liquid Cash    : INR {self.portfolio_inr:.2f}")
@@ -583,6 +603,7 @@ class AutonomousDemoTrader:
         print(f"   Danger Floor   : {danger_status}")
         print(f"   Survival Tier  : {st.emoji} {st.tier} (Floor: ${st.min_liquidity_usd:,.0f})")
         print(f"   Market Regime  : {regime_emoji} {regime}")
+        print(f"   News Sentiment : 📰 {news_str}")
         print(f"   Brain Accuracy : {self.brain.recent_accuracy*100:.0f}% | Threshold: {self.brain.adaptive_threshold*100:.0f}%")
         bar_len = int(progress // 5)
         print(f"   Cycle Metric   : [{'#' * bar_len}{'-' * (20 - bar_len)}] {progress:.1f}%")
