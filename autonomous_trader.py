@@ -84,6 +84,10 @@ class AutonomousDemoTrader:
         self.is_paused = False  # Controlled via Telegram /pause and /resume
         self.daily_start_nw = STARTING_BALANCE_INR
         self.last_daily_scorecard = time.time()
+        self.last_reported_regime = None
+        self.activity_log = [
+            {"time": time.strftime("%H:%M:%S"), "icon": "🚀", "message": "CryptoGen v2 Autonomous Engine Online"}
+        ]
 
         # Restore persistent state across container restarts
         self.load_state()
@@ -145,6 +149,19 @@ class AutonomousDemoTrader:
                 print(f"   Net Worth: INR {self.get_total_net_worth():.2f} | Positions: {len(self.active_positions)} | Record: {self.wins}W / {self.losses}L | Cycle #{self.current_cycle_idx + 1}")
             except Exception as e:
                 print(f"⚠️ [STATE RESTORE NOTICE] Starting fresh: {e}")
+
+    def log_activity(self, icon: str, msg: str):
+        """Records an action to the live activity feed for dashboard telemetry."""
+        entry = {
+            "time": time.strftime("%H:%M:%S"),
+            "icon": icon,
+            "message": msg
+        }
+        if not hasattr(self, "activity_log"):
+            self.activity_log = []
+        self.activity_log.insert(0, entry)
+        if len(self.activity_log) > 15:
+            self.activity_log.pop()
 
     def save_state(self):
         """Atomically saves bot state snapshot to disk to survive container restarts."""
@@ -281,7 +298,8 @@ class AutonomousDemoTrader:
                 "updated_at": time.time(),
                 "daily_pnl": round(daily_pnl, 2),
                 "daily_pnl_pct": round(daily_pnl_pct, 2),
-                "is_paused": self.is_paused
+                "is_paused": self.is_paused,
+                "activity_feed": getattr(self, "activity_log", [])
             }
 
             state_file = os.path.join(os.path.dirname(__file__), "live_state.json")
@@ -509,7 +527,28 @@ class AutonomousDemoTrader:
         print(f"   {st.emoji} Survival Tier: {st.tier} — {st.description}")
 
         # 2. Market Regime Detection
-        self.current_regime = await self.regime_detector.detect_regime()
+        new_regime_info = await self.regime_detector.detect_regime()
+        new_regime = new_regime_info.get("regime", "UNKNOWN")
+
+        # Check for Regime Shift & Alert Telegram
+        if self.last_reported_regime is not None and new_regime != self.last_reported_regime:
+            old_regime = self.last_reported_regime
+            new_emoji = new_regime_info.get("emoji", "🌊")
+            new_desc = new_regime_info.get("description", "")
+            new_thresh = new_regime_info.get("ml_threshold", 0.65) * 100
+            print(f"\n🌊 [REGIME SHIFT DETECTED] {old_regime} ➔ {new_regime}!")
+            self.log_activity("🌊", f"Market Shift: {old_regime} ➔ {new_regime}")
+            await send_telegram_alert(
+                f"🌊 *[MARKET REGIME SHIFT]*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Transition:* {old_regime} ➔ {new_emoji} *{new_regime}*\n"
+                f"• *Context:* {new_desc}\n"
+                f"• *ML Entry Threshold:* {new_thresh:.0f}%\n"
+                f"• *Action:* Trading parameters dynamically tuned for {new_regime} liquidity."
+            )
+
+        self.last_reported_regime = new_regime
+        self.current_regime = new_regime_info
         regime = self.current_regime
         print(f"   {regime.get('emoji', '')} Market Regime: {regime['regime']} "
               f"(Confidence: {regime.get('confidence', 0)*100:.0f}%) — {regime.get('description', '')}")
@@ -616,22 +655,26 @@ class AutonomousDemoTrader:
             # Filter 0: Survival Tier Pool Liquidity Check
             if liq < min_pool_liq:
                 print(f"   [SURVIVAL LIQ] {symbol}: Pool ${liq:,.0f} < ${min_pool_liq:,.0f} tier floor. Skipped.")
+                self.log_activity("🛡️", f"Filtered {symbol}: Pool ${liq:,.0f} < ${min_pool_liq:,.0f} floor")
                 continue
 
             # Filter 1: Basic Safety (RugCheck / DexScreener)
             safety = await analyze_token_safety(addr, live_data)
             if not safety["safe"]:
+                reason_clean = safety['reason'][:35]
                 # Journal says tighten safety? Extra penalty
                 if self.journal_weights.get("safety_strictness", 1.0) > 1.0:
                     print(f"   [SAFETY+] {symbol}: {safety['reason']}. STRICTLY Skipped.")
                 else:
                     print(f"   [SAFETY] {symbol}: {safety['reason']}. Skipped.")
+                self.log_activity("⚠️", f"Filtered {symbol}: {reason_clean}")
                 continue
 
             # Filter 2: Wash Trading & Manipulation Detection
             wash = live_data.get("wash_analysis", {})
             if wash.get("manipulated", False):
                 print(f"   [MANIPULATION] {symbol}: Wash trading (Score {wash['wash_score']}). Skipped.")
+                self.log_activity("🚫", f"Filtered {symbol}: Wash trading (Score {wash['wash_score']})")
                 continue
 
             # Filter 3: AMM Price Impact
@@ -640,6 +683,7 @@ class AutonomousDemoTrader:
             price_impact = calculate_amm_price_impact(trade_sol, pool_sol)
             if price_impact > 0.03:
                 print(f"   [SLIPPAGE] {symbol}: Price impact {price_impact*100:.2f}% > 3.0%. Skipped.")
+                self.log_activity("📉", f"Filtered {symbol}: Price impact {price_impact*100:.1f}% too high")
                 continue
 
             # Filter 4: Feature Extraction & ML Prediction
@@ -670,6 +714,7 @@ class AutonomousDemoTrader:
             # Entry Check with adaptive threshold
             if win_prob < entry_threshold:
                 print(f"   Confidence {win_prob*100:.1f}% < {entry_threshold*100:.0f}%. Skipping.")
+                self.log_activity("🧠", f"Evaluated {symbol}: {win_prob*100:.0f}% < {entry_threshold*100:.0f}% bar")
                 continue
 
             # Position Sizing via Kelly (regime-adjusted)
@@ -725,6 +770,7 @@ class AutonomousDemoTrader:
 
             regime_tag = self.current_regime.get("regime", "?")
             self.save_state()
+            self.log_activity("🚀", f"BUY {symbol} @ ${price:.8f} (INR {size_inr:.2f})")
             print(f"   [BUY FILLED] {symbol} | Invested: INR{size_inr:.2f} | ATA Rent: INR{ata_locked:.2f} | Regime: {regime_tag}")
             print(f"   TX: {swap_res.get('tx_hash')[:32]}...")
             print(f"   Stop Loss: ${price * (1.0 - STOP_LOSS_PERCENT):.8f} (-30%)")
@@ -933,6 +979,30 @@ class AutonomousDemoTrader:
         print("-" * 60)
 
 
+async def keep_alive_pinger():
+    """
+    Background watchdog that pings the Render web service every 8 minutes
+    to ensure the free container never sleeps and maintains 24/7 scanning.
+    """
+    import httpx
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "https://cryptogen-bot.onrender.com").rstrip("/")
+    ping_url = f"{render_url}/api/state"
+    await asyncio.sleep(45)  # Initial grace period after startup
+
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.get(ping_url)
+                if res.status_code == 200:
+                    print(f"⏱️ [KEEP-ALIVE] Pinged {ping_url} (HTTP 200 OK) — 24/7 Cloud Incubation Active.")
+                else:
+                    print(f"⏱️ [KEEP-ALIVE] Pinged {ping_url} (HTTP {res.status_code}).")
+        except Exception as e:
+            print(f"⏱️ [KEEP-ALIVE] Ping attempt: {e}")
+
+        await asyncio.sleep(480)  # 8 minutes
+
+
 async def run_autonomous_simulation_loop():
     trader = AutonomousDemoTrader()
 
@@ -942,6 +1012,9 @@ async def run_autonomous_simulation_loop():
     dashboard_port = int(os.getenv("PORT", 8080))
     dash_thread = threading.Thread(target=start_dashboard_server, args=(dashboard_port,), daemon=True)
     dash_thread.start()
+
+    # Launch Cloud Keep-Alive Self-Pinger
+    asyncio.create_task(keep_alive_pinger())
 
     print(f"🚀 CryptoGen Cloud Worker started. Web Dashboard live on port {dashboard_port}!")
     await send_telegram_alert(f"🚀 *[BOT ONLINE]* CryptoGen 24/7 Cloud Incubation started!\n• Mode: Virtual Paper Trading\n• Starting Balance: INR 100.00\n• Web Dashboard: Live on port {dashboard_port}")

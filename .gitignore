@@ -19,3 +19,5 @@ Thumbs.db
 *.tmp
 live_state.json
 bot_state.json
+meta_history.json
+regime_history.json

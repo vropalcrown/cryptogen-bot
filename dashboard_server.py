@@ -255,6 +255,17 @@ DASHBOARD_HTML = """
         </div>
       </div>
     </div>
+
+    <!-- Live Autonomous Quant Feed -->
+    <div class="panel" style="margin-top: 10px;">
+      <div class="panel-header">
+        <div class="panel-title">⚡ Live Autonomous Quant Feed</div>
+        <span style="font-size: 11px; color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace;" id="feed-ticker">Real-Time Sniper Ticker</span>
+      </div>
+      <div id="activity-feed" style="display: flex; flex-direction: column; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px; max-height: 280px; overflow-y: auto;">
+        <div style="color: var(--text-muted); text-align: center; padding: 20px;">Streaming live candidate audits & safety filters...</div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -303,6 +314,21 @@ DASHBOARD_HTML = """
                 </tr>
               `;
             }).join('');
+          }
+
+          // Live Activity Feed Dynamic Re-render
+          const feed = data.activity_feed || [];
+          const feedEl = document.getElementById('activity-feed');
+          if (feedEl && feed.length > 0) {
+            feedEl.innerHTML = feed.map(item => `
+              <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; border-left: 3px solid var(--accent-cyan);">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <span style="font-size: 14px;">${item.icon || '⚡'}</span>
+                  <span style="color: var(--text-main); font-weight: 500;">${item.message}</span>
+                </div>
+                <span style="color: var(--text-muted); font-size: 11px;">${item.time}</span>
+              </div>
+            `).join('');
           }
 
           document.getElementById('sync-timer').innerText = `Updated: ${new Date().toLocaleTimeString()}`;
