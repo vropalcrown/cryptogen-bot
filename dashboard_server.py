@@ -308,6 +308,7 @@ DASHBOARD_HTML = """
         <div class="card-title">💰 Money Left (Wallet)</div>
         <div class="card-value" id="money-left" style="color: var(--accent-cyan);">INR 100.00</div>
         <div class="card-meta" id="money-left-sub">Available in wallet for new orders</div>
+        <div class="card-meta" id="cycle-target" style="font-size: 11px; color: var(--text-muted);">Cycle #1 Target: INR 1,000.00</div>
         <div class="progress-wrap">
           <div class="progress-fill" id="progress-bar" style="width: 10%;"></div>
         </div>
@@ -640,17 +641,24 @@ DASHBOARD_HTML = """
           if (botStatusEl) {
             botStatusEl.innerText = data.is_paused ? 'PAUSED' : `${mode} • ACTIVE`;
           }
-          document.getElementById('cycle-target').innerText = `Cycle #${data.cycle || 1} Target: INR ${Number(data.target_inr || 1000).toLocaleString()}`;
+          const cycleTargetEl = document.getElementById('cycle-target');
+          if (cycleTargetEl) {
+            cycleTargetEl.innerText = `Cycle #${data.cycle || 1} Target: INR ${Number(data.target_inr || 1000).toLocaleString()}`;
+          }
           const dangerFloorEl = document.getElementById('danger-floor');
-          if (dangerFloorEl) dangerFloorEl.innerText = `Danger Floor: INR ${Number(data.danger_floor_inr || 50).toFixed(2)}`;
+          if (dangerFloorEl) {
+            dangerFloorEl.innerText = `Danger Floor: INR ${Number(data.danger_floor_inr || 50).toFixed(2)}`;
+          }
           
           const totalCapital = Number(mLeft) + Number(mInv);
           const pct = Math.min(100, (totalCapital / Number(data.target_inr || 1000)) * 100);
-          document.getElementById('progress-bar').style.width = `${pct}%`;
+          const progBarEl = document.getElementById('progress-bar');
+          if (progBarEl) progBarEl.style.width = `${pct}%`;
 
           // Positions Table Dynamic Re-render
           const positions = data.positions || [];
-          document.getElementById('pos-count').innerText = positions.length;
+          const posCountEl = document.getElementById('pos-count');
+          if (posCountEl) posCountEl.innerText = positions.length;
           const tbody = document.getElementById('positions-table');
 
           if (positions.length === 0) {
