@@ -864,8 +864,8 @@ class AutonomousDemoTrader:
         min_pool_liq = self.survival_tier.min_liquidity_usd if hasattr(self, "survival_tier") else 5000.0
         print(f"   [THRESHOLD] Entry bar: {entry_threshold*100:.0f}% (Regime: {regime_threshold*100:.0f}%, Survival: {survival_min_conf*100:.0f}%, Min Liq: ${min_pool_liq:,.0f})")
 
-        # Stage 1: Concurrent Pre-Filter with Semaphore(4) rate limiting
-        semaphore = asyncio.Semaphore(4)
+        # Stage 1: Concurrent Pre-Filter with Semaphore(6) rate limiting
+        semaphore = asyncio.Semaphore(6)
         evaluated_candidates = []
 
         async def pre_evaluate_candidate(addr: str):
@@ -1469,8 +1469,8 @@ async def run_autonomous_simulation_loop():
             ]
             candidates = list(dict.fromkeys(trending + popular_tokens))
 
-            # 3. Scan & execute candidate trades (Virtual or Live) across up to 45 candidates
-            await trader.scan_and_trade(candidates[:45])
+            # 3. Scan & execute candidate trades (Virtual or Live) across up to 70 candidates
+            await trader.scan_and_trade(candidates[:70])
             trader.display_dashboard()
 
             # 3.5 Shadow Watchlist: Evaluate post-rejection outcomes (False Negatives & Dodged Rugs)

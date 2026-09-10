@@ -90,51 +90,93 @@ async def fetch_dex_token_data(token_address: str) -> dict:
         except Exception as e:
             return None
 
+SOL_MINT = "So11111111111111111111111111111111111111112"
+
 async def fetch_trending_solana_tokens() -> list:
     """
-    Pulls high-conviction Solana trading candidates across multiple sources:
-      1. GeckoTerminal Trending Pools (verified liquidity $20k - $5M)
-      2. DexScreener Top Community Boosts (active retail momentum)
-      3. DexScreener Latest Token Profiles (early breakouts for shadow monitoring)
+    Pulls high-conviction Solana trading candidates across 5 parallel multi-DEX sources:
+      1. Raydium Official v3 Pools API (Top 30 by 24h volume)
+      2. GeckoTerminal Trending Pools (Verified high-activity pools)
+      3. GeckoTerminal 24h Top Volume Pools (Deepest liquidity pools)
+      4. DexScreener Top Community Boosts (Active retail momentum)
+      5. DexScreener Latest Promoted Boosts (Early breakout velocity)
     """
     candidates = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        # Source 1: GeckoTerminal Trending Pools (High Volume & Real Liquidity)
-        try:
-            res = await client.get(
-                "https://api.geckoterminal.com/api/v2/networks/solana/trending_pools",
-                headers={"Accept": "application/json"}
-            )
-            if res.status_code == 200:
-                for pool in res.json().get("data", []):
-                    base_id = pool.get("relationships", {}).get("base_token", {}).get("data", {}).get("id", "")
-                    addr = base_id.replace("solana_", "")
-                    if addr and len(addr) >= 32:
-                        candidates.append(addr)
-        except Exception:
-            pass
+    async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
+        # Source 1: Raydium Official v3 Pools (Solana's Primary DEX)
+        async def fetch_raydium():
+            try:
+                res = await client.get("https://api-v3.raydium.io/pools/info/list?poolType=all&poolSortField=volume24h&sortType=desc&pageSize=30&page=1")
+                if res.status_code == 200:
+                    for p in res.json().get("data", {}).get("data", []):
+                        mA = p.get("mintA", {}).get("address", "")
+                        mB = p.get("mintB", {}).get("address", "")
+                        tok = mB if mA == SOL_MINT else mA
+                        if tok and tok != SOL_MINT and len(tok) >= 32:
+                            candidates.append(tok)
+            except Exception:
+                pass
 
-        # Source 2: DexScreener Top Community Boosts
-        try:
-            res = await client.get("https://api.dexscreener.com/token-boosts/top/v1")
-            if res.status_code == 200:
-                for item in res.json():
-                    if item.get("chainId") == "solana" and item.get("tokenAddress"):
-                        candidates.append(item["tokenAddress"])
-        except Exception:
-            pass
+        # Source 2: GeckoTerminal Trending Pools
+        async def fetch_gecko_trending():
+            try:
+                res = await client.get("https://api.geckoterminal.com/api/v2/networks/solana/trending_pools", headers={"Accept": "application/json"})
+                if res.status_code == 200:
+                    for pool in res.json().get("data", []):
+                        base_id = pool.get("relationships", {}).get("base_token", {}).get("data", {}).get("id", "")
+                        addr = base_id.replace("solana_", "")
+                        if addr and addr != SOL_MINT and len(addr) >= 32:
+                            candidates.append(addr)
+            except Exception:
+                pass
 
-        # Source 3: DexScreener Latest Token Profiles (early gems / shadow targets)
-        try:
-            res = await client.get("https://api.dexscreener.com/token-profiles/latest/v1")
-            if res.status_code == 200:
-                for item in res.json()[:5]:
-                    if item.get("chainId") == "solana" and item.get("tokenAddress"):
-                        candidates.append(item["tokenAddress"])
-        except Exception:
-            pass
+        # Source 3: GeckoTerminal Top 24h Volume Pools (Deep Liquidity)
+        async def fetch_gecko_top_vol():
+            try:
+                res = await client.get("https://api.geckoterminal.com/api/v2/networks/solana/pools?sort=h24_volume_usd_desc", headers={"Accept": "application/json"})
+                if res.status_code == 200:
+                    for pool in res.json().get("data", []):
+                        base_id = pool.get("relationships", {}).get("base_token", {}).get("data", {}).get("id", "")
+                        addr = base_id.replace("solana_", "")
+                        if addr and addr != SOL_MINT and len(addr) >= 32:
+                            candidates.append(addr)
+            except Exception:
+                pass
 
-    # Deduplicate preserving order
+        # Source 4: DexScreener Top Community Boosts
+        async def fetch_dex_top_boosts():
+            try:
+                res = await client.get("https://api.dexscreener.com/token-boosts/top/v1")
+                if res.status_code == 200:
+                    for item in res.json():
+                        if item.get("chainId") == "solana" and item.get("tokenAddress"):
+                            candidates.append(item["tokenAddress"])
+            except Exception:
+                pass
+
+        # Source 5: DexScreener Latest Promoted Boosts
+        async def fetch_dex_latest_boosts():
+            try:
+                res = await client.get("https://api.dexscreener.com/token-boosts/latest/v1")
+                if res.status_code == 200:
+                    for item in res.json()[:20]:
+                        if item.get("chainId") == "solana" and item.get("tokenAddress"):
+                            candidates.append(item["tokenAddress"])
+            except Exception:
+                pass
+
+        # Run all 5 API calls in parallel
+        await asyncio.gather(
+            fetch_raydium(),
+            fetch_gecko_trending(),
+            fetch_gecko_top_vol(),
+            fetch_dex_top_boosts(),
+            fetch_dex_latest_boosts(),
+            return_exceptions=True
+        )
+
+    # Deduplicate preserving discovery order
     unique_candidates = list(dict.fromkeys(candidates))
-    return unique_candidates[:50]
+    return unique_candidates[:75]
