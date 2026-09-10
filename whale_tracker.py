@@ -83,9 +83,9 @@ class WhaleTracker:
 
     def get_whale_bonus(self, token_address: str) -> float:
         """
-        Returns a +0.15 (15%) confidence bonus if a token was recently
+        Returns a +0.03 (3%) confidence bonus if a token was recently
         accumulated by a verified smart money wallet.
         """
         if token_address in self.cached_whale_tokens:
-            return 0.15
+            return 0.03
         return 0.0

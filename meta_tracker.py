@@ -226,11 +226,11 @@ class MetaTracker:
 
         for cat in cats:
             if cat in self.hot_categories[:1]:
-                return 0.15
+                return 0.03
             if cat in self.hot_categories[1:2]:
-                return 0.10
+                return 0.02
             if cat in self.hot_categories[2:3]:
-                return 0.05
+                return 0.01
 
         return 0.0
 

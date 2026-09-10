@@ -97,8 +97,8 @@ class StrategyAutoTuner:
         # Tuning Decision Tree:
         # Scenario A: High-Volatility / Trending Bull Market
         if regime in ("BULL_RUN", "RECOVERY") or sol_change > 2.5:
-            new_sl = 0.11  # Slightly wider SL (-11%) to avoid being wicked out by high volatility
-            new_be = 1.25  # Give more breathing room before BE ratchet
+            new_sl = 0.14  # Wider SL (-14%) to avoid being wicked out by high volatility
+            new_be = 1.20  # Break-even ratchet at +20%
             new_tp1 = 1.30 # Widen TP1 to +30%
             new_tp2 = 1.75 # Widen TP2 to +75%
             new_tp3 = 3.50 # Moonshot runner to 3.5x (+250%)
@@ -107,23 +107,23 @@ class StrategyAutoTuner:
 
         # Scenario B: Crab / Choppy Market (Default current regime)
         elif regime == "CRAB":
-            new_sl = 0.10  # Optimal -10% stop-loss
-            new_be = 1.20  # Quick break-even at +20%
+            new_sl = 0.13  # -13% stop-loss gives breathing room against normal DEX wicks
+            new_be = 1.15  # Quick break-even ratchet at +15% to eliminate downside
             new_tp1 = 1.25 # Early profit lock at +25%
             new_tp2 = 1.60 # Momentum capture at +60%
             new_tp3 = 3.00 # Target 3.0x
             vol_mode = "CONSERVATIVE_CRAB"
-            reason = "Sideways consolidation detected. Locked quick-exit asymmetric ladder."
+            reason = "Sideways consolidation detected. Locked +15% break-even and -13% anti-wickout SL."
 
         # Scenario C: Bear / Crash Market
         else:
-            new_sl = 0.08  # Tight -8% stop-loss
-            new_be = 1.15  # Extremely fast break-even at +15%
+            new_sl = 0.10  # -10% stop-loss
+            new_be = 1.12  # Fast break-even at +12%
             new_tp1 = 1.20 # +20%
             new_tp2 = 1.45 # +45%
             new_tp3 = 2.00 # 2.0x max
             vol_mode = "DEFENSIVE_BEAR"
-            reason = "Bearish macro pressure. Tightened stop-loss to 8% and accelerated TP1."
+            reason = "Bearish macro pressure. Tightened stop-loss to 10% and accelerated +12% break-even."
 
         # Apply parameters
         self.active_params.update({

@@ -1182,9 +1182,19 @@ class AutonomousDemoTrader:
                 self.locked_ata_rent_inr -= refund_ata
                 self.portfolio_inr += (net_recovered + refund_ata)
 
-                loss = max(0.0, pos["invested_inr"] - net_recovered)
-                self.realized_profit_inr -= loss
-                self.losses += 1
+                remaining_cost_basis = pos["invested_inr"] * remaining_ratio
+                net_pnl = net_recovered - remaining_cost_basis
+
+                if net_pnl >= 0:
+                    self.realized_profit_inr += net_pnl
+                    self.wins += 1
+                    status_str = "PROFIT"
+                    action_tag = f"TRAILING STOP ({pnl_pct:+.1f}%)"
+                else:
+                    self.realized_profit_inr += net_pnl
+                    self.losses += 1
+                    status_str = "LOSS"
+                    action_tag = f"STOP LOSS ({pnl_pct:+.1f}%)"
 
                 # === NEW: Get current volume for journal ===
                 exit_volume = 0
@@ -1203,12 +1213,12 @@ class AutonomousDemoTrader:
                     exit_price=curr_price,
                     peak_price=pos.get("peak_price", pos["entry_price"]),
                     pnl_pct=pnl_pct,
-                    pnl_inr=-loss,
+                    pnl_inr=net_pnl,
                     hold_duration_secs=time.time() - pos.get("entry_time", time.time()),
                     sol_macro_change_pct=self.last_macro_change,
                     volume_at_entry=pos.get("entry_volume", 0),
                     volume_at_exit=exit_volume,
-                    was_stop_loss=True,
+                    was_stop_loss=(net_pnl < 0),
                     tp_stages_hit=pos.get("tp_stages_hit", 0),
                     features=pos["features"],
                     market_regime=pos.get("regime_at_entry", "UNKNOWN")
@@ -1220,13 +1230,13 @@ class AutonomousDemoTrader:
                     "timestamp": time.time(),
                     "token": pos["token"],
                     "address": addr,
-                    "action": f"STOP LOSS ({pnl_pct:+.1f}%)",
+                    "action": action_tag,
                     "price": curr_price,
-                    "size_inr": round(pos["invested_inr"], 2),
-                    "gain_loss_inr": -round(loss, 2),
+                    "size_inr": round(remaining_cost_basis, 2),
+                    "gain_loss_inr": round(net_pnl, 2),
                     "fee_inr": round(sell_fee, 2),
                     "money_left": round(self.portfolio_inr, 2),
-                    "status": "LOSS"
+                    "status": status_str
                 }
                 if not hasattr(self, "trade_history"):
                     self.trade_history = []
@@ -1269,6 +1279,7 @@ class AutonomousDemoTrader:
                     invested_part = pos["invested_inr"] * (tokens_to_sell / pos["initial_tokens"])
                     profit_gain = net_proceeds - invested_part
                     self.realized_profit_inr += profit_gain
+                    self.wins += 1
 
                     pos["remaining_tokens"] -= tokens_to_sell
                     stage["hit"] = True

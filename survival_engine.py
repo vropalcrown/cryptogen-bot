@@ -33,21 +33,21 @@ def evaluate_survival_tier(net_worth_inr: float) -> SurvivalTierConfig:
         return SurvivalTierConfig(
             tier="EXPANSION",
             emoji="💎🚀",
-            min_confidence=0.70,
+            min_confidence=0.72,
             max_position_pct=0.25,
             max_concurrent_trades=2,
-            min_liquidity_usd=10000.0,
-            description="Compounding profits. Multiple positions permitted."
+            min_liquidity_usd=25000.0,
+            description="Compounding profits. Multiple positions permitted in deep pools."
         )
     elif net_worth_inr >= 100.0:
         return SurvivalTierConfig(
             tier="NORMAL",
             emoji="🟢🎯",
-            min_confidence=0.75,
+            min_confidence=0.76,
             max_position_pct=0.25,
             max_concurrent_trades=1,
-            min_liquidity_usd=8000.0,
-            description="Nominal operation. Strict sniper entry (25% optimal size)."
+            min_liquidity_usd=25000.0,
+            description="Nominal operation. Strict sniper entry on deep liquidity pools ($25k+)."
         )
     elif net_worth_inr >= 50.0:
         return SurvivalTierConfig(
@@ -56,8 +56,8 @@ def evaluate_survival_tier(net_worth_inr: float) -> SurvivalTierConfig:
             min_confidence=0.85,
             max_position_pct=0.22,  # 22% optimal size to defeat Solana gas fee drag
             max_concurrent_trades=1,
-            min_liquidity_usd=15000.0,  # Require deeper pools to reduce slippage
-            description="Capital conservation. 22% optimal sizing. High conviction bar (85%+)."
+            min_liquidity_usd=35000.0,  # Require deep established pools to avoid slippage & dump wicks
+            description="Capital conservation. 22% sizing. High conviction bar (85%+) & deep pools ($35k+)."
         )
     else:
         return SurvivalTierConfig(
@@ -66,6 +66,6 @@ def evaluate_survival_tier(net_worth_inr: float) -> SurvivalTierConfig:
             min_confidence=0.92,
             max_position_pct=0.05,
             max_concurrent_trades=0,  # Halt normal trading to protect gas reserve
-            min_liquidity_usd=25000.0,
+            min_liquidity_usd=50000.0,
             description="Survival lockdown. Normal trading suspended to save gas reserve."
         )
