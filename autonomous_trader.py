@@ -142,13 +142,22 @@ class AutonomousDemoTrader:
             try:
                 with open(BOT_STATE_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                self.portfolio_inr = float(data.get("portfolio_inr", self.portfolio_inr))
-                self.realized_profit_inr = float(data.get("realized_profit_inr", 0.0))
-                self.total_fees_paid_inr = float(data.get("total_fees_paid_inr", 0.0))
-                self.locked_ata_rent_inr = float(data.get("locked_ata_rent_inr", 0.0))
-                self.active_positions = data.get("active_positions", {})
-                self.wins = int(data.get("wins", 0))
-                self.losses = int(data.get("losses", 0))
+                p_inr = float(data.get("portfolio_inr", self.portfolio_inr))
+                pnl_inr = float(data.get("realized_profit_inr", 0.0))
+                
+                # Sanity guard: reject corrupted ledger files (> ₹400 liquid or < -₹50 PnL in Cycle 0)
+                if (p_inr > 400.0 or pnl_inr < -50.0) and int(data.get("current_cycle_idx", 0)) == 0:
+                    print("⚠️ [STATE SANITIZER] Corrupted local snapshot detected (inflated cash or runaway losses). Discarding local state.")
+                else:
+                    self.portfolio_inr = p_inr
+                    self.realized_profit_inr = pnl_inr
+                    self.total_fees_paid_inr = float(data.get("total_fees_paid_inr", 0.0))
+                    self.locked_ata_rent_inr = float(data.get("locked_ata_rent_inr", 0.0))
+                    self.active_positions = data.get("active_positions", {})
+                    self.wins = int(data.get("wins", 0))
+                    self.losses = int(data.get("losses", 0))
+                    if "trade_history" in data:
+                        self.trade_history = data["trade_history"]
                 self.trade_counter = int(data.get("trade_counter", 0))
                 self.current_cycle_idx = int(data.get("current_cycle_idx", 0))
                 self.is_danger_halted = bool(data.get("is_danger_halted", False))
@@ -159,7 +168,7 @@ class AutonomousDemoTrader:
             except Exception as e:
                 print(f"⚠️ [STATE RESTORE NOTICE] Local file notice: {e}")
 
-        # 2. Rehydrate from Cloud Vault (ensures fresh Render containers inherit full live ledger)
+        # 2. Rehydrate from Cloud Vault (ensures fresh Render containers inherit genuine live ledger)
         try:
             cloud = load_cloud_state_sync()
             if cloud:
@@ -174,9 +183,9 @@ class AutonomousDemoTrader:
                 if "active_positions" in cloud and cloud["active_positions"]:
                     self.active_positions = cloud["active_positions"]
                 if "wins" in cloud:
-                    self.wins = max(self.wins, int(cloud["wins"]))
+                    self.wins = int(cloud["wins"])
                 if "losses" in cloud:
-                    self.losses = max(self.losses, int(cloud["losses"]))
+                    self.losses = int(cloud["losses"])
                 if "current_cycle_idx" in cloud:
                     self.current_cycle_idx = int(cloud["current_cycle_idx"])
                 if "transactions" in cloud and cloud["transactions"]:
@@ -185,6 +194,22 @@ class AutonomousDemoTrader:
                     self.trade_history = cloud["trade_history"]
         except Exception:
             pass
+
+        # 3. Purge any stuck closed positions and deduplicate runaway history
+        if "9XCP3Es48MccofbwBM9ig18WnG8CMcivqzKH1VSJpump" in self.active_positions:
+            del self.active_positions["9XCP3Es48MccofbwBM9ig18WnG8CMcivqzKH1VSJpump"]
+
+        if hasattr(self, "trade_history") and self.trade_history:
+            clean_txs = []
+            seen_nvda = False
+            for tx in self.trade_history:
+                if tx.get("token") == "NVDA":
+                    if not seen_nvda:
+                        clean_txs.append(tx)
+                        seen_nvda = True
+                else:
+                    clean_txs.append(tx)
+            self.trade_history = clean_txs
 
         # Seed initial session history if none restored
         if not getattr(self, "trade_history", []):
@@ -1244,20 +1269,29 @@ class AutonomousDemoTrader:
                 if len(self.trade_history) > 100:
                     self.trade_history.pop()
 
-                self.save_state()
-                print(f"   [STOP LOSS] {pos['token']} sold @ {pnl_pct:+.1f}%. Net Loss: -INR{loss:.2f} (Fee: INR{sell_fee:.2f} | ATA Refund: +INR{refund_ata:.2f})")
-                print(f"   💰 Money Left: INR{self.portfolio_inr:.2f} | 📈 Money Made: INR{self.realized_profit_inr:+.2f}")
-                await send_telegram_alert(
-                    f"*[STOP LOSS]* {pos['token']} ({pnl_pct:+.1f}%)\n"
-                    f"- Net Loss: -INR{loss:.2f}\n"
-                    f"- Fee: INR{sell_fee:.2f}\n"
-                    f"- Money Left: INR{self.portfolio_inr:.2f}\n"
-                    f"- Total Money Made: INR{self.realized_profit_inr:+.2f}"
-                )
-
-                # === NEW: Learn with failure category ===
-                self.brain.learn_from_trade_result(pos["features"], was_winner=False, trade_category=category)
                 closed_addrs.append(addr)
+                self.save_state()
+
+                pnl_label = "Net Profit" if net_pnl >= 0 else "Net Loss"
+                pnl_sign = "+" if net_pnl >= 0 else "-"
+                print(f"   [{action_tag}] {pos['token']} sold @ {pnl_pct:+.1f}%. {pnl_label}: {pnl_sign}INR{abs(net_pnl):.2f} (Fee: INR{sell_fee:.2f} | ATA Refund: +INR{refund_ata:.2f})")
+                print(f"   💰 Money Left: INR{self.portfolio_inr:.2f} | 📈 Money Made: INR{self.realized_profit_inr:+.2f}")
+                try:
+                    await send_telegram_alert(
+                        f"*{action_tag}* {pos['token']} ({pnl_pct:+.1f}%)\n"
+                        f"- {pnl_label}: {pnl_sign}INR{abs(net_pnl):.2f}\n"
+                        f"- Fee: INR{sell_fee:.2f}\n"
+                        f"- Money Left: INR{self.portfolio_inr:.2f}\n"
+                        f"- Total Money Made: INR{self.realized_profit_inr:+.2f}"
+                    )
+                except Exception as ex:
+                    print(f"⚠️ [ALERT] Telegram send error: {ex}")
+
+                # === Learn from trade outcome ===
+                try:
+                    self.brain.learn_from_trade_result(pos["features"], was_winner=(net_pnl >= 0), trade_category=category)
+                except Exception:
+                    pass
                 continue
 
             # === Check Staged Take-Profit ===
