@@ -305,25 +305,25 @@ DASHBOARD_HTML = """
     <!-- Top Ledger Metrics: Money Left, Money Invested, Money Made, Fees Paid -->
     <div class="grid">
       <div class="card" style="border-left: 4px solid var(--accent-cyan);">
-        <div class="card-title">💰 Money Left (Liquid Cash)</div>
+        <div class="card-title">💰 Money Left (Wallet)</div>
         <div class="card-value" id="money-left" style="color: var(--accent-cyan);">INR 100.00</div>
-        <div class="card-meta" id="cycle-target">Cycle #1 Target: INR 1,000.00</div>
+        <div class="card-meta" id="money-left-sub">Available in wallet for new orders</div>
         <div class="progress-wrap">
           <div class="progress-fill" id="progress-bar" style="width: 10%;"></div>
         </div>
       </div>
 
       <div class="card" style="border-left: 4px solid var(--accent-blue);">
-        <div class="card-title">💼 Money Invested (At Risk)</div>
+        <div class="card-title">💼 Money Invested (In Market)</div>
         <div class="card-value" id="money-invested" style="color: var(--accent-blue);">INR 0.00</div>
-        <div class="card-meta" id="floating-pnl" style="color: var(--win-green); font-weight: 600;">Floating: +INR 0.00</div>
-        <div class="card-meta" id="pos-count-sub">0 Open Trade(s)</div>
+        <div class="card-meta" id="pos-count-sub">0 Open Trade(s) floating in market</div>
+        <div class="card-meta" style="color: var(--text-muted);">Returns to wallet when trades exit</div>
       </div>
 
       <div class="card" style="border-left: 4px solid var(--win-green);">
-        <div class="card-title">📈 Money Made (Net Profit)</div>
-        <div class="card-value" id="money-made" style="color: var(--win-green);">+INR 0.00</div>
-        <div class="card-meta" style="color: var(--text-muted);">Added directly to Cash upon trade exit</div>
+        <div class="card-title">📈 Money Made (Floating Profit)</div>
+        <div class="card-value" id="money-made" style="color: var(--win-green);">INR 0.00</div>
+        <div class="card-meta" id="money-made-sub" style="color: var(--text-muted);">Profiting from invested money (Zero when no trades open)</div>
         <div class="card-meta" id="record-stats">Record: 0W / 0L</div>
       </div>
 
@@ -589,24 +589,36 @@ DASHBOARD_HTML = """
           const mInv = Number(data.money_invested !== undefined ? data.money_invested : 0).toFixed(2);
           const mMade = Number(data.money_made !== undefined ? data.money_made : 0);
           const feesPaid = Number(data.total_fees_paid !== undefined ? data.total_fees_paid : 0).toFixed(2);
-          const floatPnl = Number(data.floating_pnl_inr !== undefined ? data.floating_pnl_inr : 0);
+          const posCount = (data.positions || []).length;
 
           const mLeftEl = document.getElementById('money-left');
           if (mLeftEl) mLeftEl.innerText = `INR ${mLeft}`;
 
+          const mLeftSub = document.getElementById('money-left-sub');
+          if (mLeftSub) {
+            mLeftSub.innerText = posCount === 0 
+              ? 'Holds full wallet balance (Ready to invest)' 
+              : 'Available cash in wallet for new orders';
+          }
+
           const mInvEl = document.getElementById('money-invested');
           if (mInvEl) mInvEl.innerText = `INR ${mInv}`;
 
-          const floatPnlEl = document.getElementById('floating-pnl');
-          if (floatPnlEl) {
-            floatPnlEl.style.color = floatPnl >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
-            floatPnlEl.innerText = `Floating: ${floatPnl >= 0 ? '+' : ''}INR ${floatPnl.toFixed(2)}`;
-          }
+          const posCountSub = document.getElementById('pos-count-sub');
+          if (posCountSub) posCountSub.innerText = `${posCount} Open Trade(s) floating in market`;
 
           const mMadeEl = document.getElementById('money-made');
+          const mMadeSub = document.getElementById('money-made-sub');
           if (mMadeEl) {
-            mMadeEl.style.color = mMade >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
-            mMadeEl.innerText = `${mMade >= 0 ? '+' : ''}INR ${mMade.toFixed(2)}`;
+            if (posCount === 0 || Math.abs(mMade) < 0.001) {
+              mMadeEl.style.color = 'var(--text-muted)';
+              mMadeEl.innerText = 'INR 0.00';
+              if (mMadeSub) mMadeSub.innerText = 'Zero (No active investment floating in market)';
+            } else {
+              mMadeEl.style.color = mMade >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
+              mMadeEl.innerText = `${mMade >= 0 ? '+' : ''}INR ${mMade.toFixed(2)}`;
+              if (mMadeSub) mMadeSub.innerText = 'Live profit floating from invested money';
+            }
           }
 
           const feesEl = document.getElementById('fees-paid');
@@ -614,9 +626,6 @@ DASHBOARD_HTML = """
 
           const recEl = document.getElementById('record-stats');
           if (recEl) recEl.innerText = `Record: ${data.wins || 0}W / ${data.losses || 0}L`;
-
-          const posCountSub = document.getElementById('pos-count-sub');
-          if (posCountSub) posCountSub.innerText = `${(data.positions || []).length} Open Trade(s)`;
 
           // Burner Wallet & Mode Subheader
           const pub = data.burner_wallet ? `${data.burner_wallet.slice(0, 6)}...${data.burner_wallet.slice(-6)}` : 'C41pja...QZQZjF';

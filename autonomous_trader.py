@@ -424,7 +424,7 @@ class AutonomousDemoTrader:
 
             positions_list = []
             for addr, pos in self.active_positions.items():
-                curr = pos.get("peak_price", pos["entry_price"])
+                curr = pos.get("curr_price", pos.get("peak_price", pos["entry_price"]))
                 pnl = ((curr - pos["entry_price"]) / pos["entry_price"]) * 100
                 positions_list.append({
                     "token": pos["token"],
@@ -438,18 +438,20 @@ class AutonomousDemoTrader:
 
             invested_total = sum(pos.get("invested_inr", 0.0) for pos in self.active_positions.values())
             floating_pnl_inr = sum(
-                (pos.get("invested_inr", 0.0) * (pos.get("curr_price", pos["entry_price"]) / max(1e-12, pos["entry_price"])) * (pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0)))) - pos.get("invested_inr", 0.0)
+                (pos.get("invested_inr", 0.0) * (pos.get("remaining_tokens", pos.get("initial_tokens", 1.0)) / max(1e-6, pos.get("initial_tokens", 1.0))))
+                * ((pos.get("curr_price", pos["entry_price"]) - pos["entry_price"]) / max(1e-12, pos["entry_price"]))
                 for pos in self.active_positions.values()
-            )
+            ) if self.active_positions else 0.0
 
             state = {
                 "net_worth": round(total_nw, 2),
                 "liquid_cash": round(self.portfolio_inr, 2),
                 "money_left": round(self.portfolio_inr, 2),
                 "money_invested": round(invested_total, 2),
-                "money_made": round(getattr(self, "realized_profit_inr", 0.0), 2),
+                "money_made": round(floating_pnl_inr, 2) if self.active_positions else 0.0,
+                "floating_pnl_inr": round(floating_pnl_inr, 2) if self.active_positions else 0.0,
+                "realized_profit_inr": round(getattr(self, "realized_profit_inr", 0.0), 2),
                 "total_fees_paid": round(getattr(self, "total_fees_paid_inr", 0.0), 2),
-                "floating_pnl_inr": round(floating_pnl_inr, 2),
                 "cycle": stage["cycle"],
                 "target_inr": stage["target_inr"],
                 "danger_floor_inr": stage["danger_floor_inr"],
@@ -608,11 +610,17 @@ class AutonomousDemoTrader:
                 ]) or "  • None (Cash 100% liquid)"
 
                 m_invested = sum(p["invested_inr"] for p in self.active_positions.values())
+                floating_pnl = sum(
+                    (p.get("invested_inr", 0.0) * (p.get("remaining_tokens", p.get("initial_tokens", 1.0)) / max(1e-6, p.get("initial_tokens", 1.0))))
+                    * ((p.get("curr_price", p["entry_price"]) - p["entry_price"]) / max(1e-12, p["entry_price"]))
+                    for p in self.active_positions.values()
+                ) if self.active_positions else 0.0
+
                 await send_telegram_alert(
                     f"📊 *[CRYPTOGEN FINANCIAL LEDGER]*\n\n"
-                    f"💰 *Money Left:* INR {self.portfolio_inr:.2f}\n"
-                    f"💼 *Money Invested:* INR {m_invested:.2f}\n"
-                    f"📈 *Money Made (Net Profit):* INR {self.realized_profit_inr:+.2f}\n"
+                    f"💰 *Money Left (Wallet):* INR {self.portfolio_inr:.2f}\n"
+                    f"💼 *Money Invested (In Market):* INR {m_invested:.2f}\n"
+                    f"📈 *Money Made (Floating Profit):* {floating_pnl:+.2f} INR\n"
                     f"⛽ *Total Fees Paid:* INR {self.total_fees_paid_inr:.2f}\n\n"
                     f"• *Open Trades ({len(self.active_positions)}):*\n{pos_summary}\n\n"
                     f"• *Cycle #{stage['cycle']}:* Target INR {stage['target_inr']:,.0f} | Danger Floor INR {stage['danger_floor_inr']:.0f}\n"
@@ -1081,6 +1089,7 @@ class AutonomousDemoTrader:
                 "token": symbol,
                 "name": name,
                 "entry_price": price,
+                "curr_price": price,
                 "peak_price": price,  # Track peak for journal
                 "invested_inr": size_inr,
                 "ata_locked_inr": ata_locked,
@@ -1154,6 +1163,7 @@ class AutonomousDemoTrader:
 
         for addr, pos in list(self.active_positions.items()):
             curr_price = price_dict.get(addr, pos["entry_price"])
+            pos["curr_price"] = curr_price
             pnl_pct = ((curr_price - pos["entry_price"]) / pos["entry_price"]) * 100
 
             # Track peak price and ratchet Trailing Stop-Loss
@@ -1407,8 +1417,14 @@ class AutonomousDemoTrader:
         news_str = f"{nr.get('sentiment_label', 'NEUTRAL')} ({nr.get('sentiment_score', 0.0):+.2f})" if nr else "N/A"
 
         m_invested = sum(pos.get("invested_inr", 0.0) for pos in self.active_positions.values())
+        floating_pnl = sum(
+            (pos.get("invested_inr", 0.0) * (pos.get("remaining_tokens", pos.get("initial_tokens", 1.0)) / max(1e-6, pos.get("initial_tokens", 1.0))))
+            * ((pos.get("curr_price", pos["entry_price"]) - pos["entry_price"]) / max(1e-12, pos["entry_price"]))
+            for pos in self.active_positions.values()
+        ) if self.active_positions else 0.0
+
         print("\n" + "-" * 60)
-        print(f" 💰 MONEY LEFT : INR {self.portfolio_inr:.2f} | 💼 INVESTED: INR {m_invested:.2f} | 📈 MADE: INR {self.realized_profit_inr:+.2f}")
+        print(f" 💰 MONEY LEFT (Wallet) : INR {self.portfolio_inr:.2f} | 💼 INVESTED (In Market): INR {m_invested:.2f} | 📈 MADE (Floating): {floating_pnl:+.2f} INR")
         print(f"   DEX Fees Paid  : INR {self.total_fees_paid_inr:.2f} (Solana Gas + 0.3% Raydium AMM)")
         print(f"   ATA Rent Locked: INR {self.locked_ata_rent_inr:.2f} (100% Refundable on exit)")
         print(f"   Open Positions : {len(self.active_positions)} (Cycle #{stage['cycle']} Target: INR {cycle_target:,.0f})")
