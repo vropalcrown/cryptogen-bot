@@ -728,7 +728,8 @@ class AutonomousDemoTrader:
 
     def calculate_kelly_position_size(self, win_probability: float) -> float:
         """Kelly sizing adjusted by survival tier and Monte Carlo optimal floor (INR 20-25)."""
-        tradeable_cash = max(0.0, self.portfolio_inr - EMERGENCY_RESERVE_INR)
+        # Leave a ₹2.00 buffer for gas and ATA rent reservation so wallet never dips into emergency floor
+        tradeable_cash = max(0.0, self.portfolio_inr - EMERGENCY_RESERVE_INR - 2.0)
         if tradeable_cash < 15.0:
             return 0.0
 
@@ -1103,6 +1104,7 @@ class AutonomousDemoTrader:
                 "entry_volume": live_data.get("volume_1h", 0),
                 "regime_at_entry": self.current_regime.get("regime", "UNKNOWN"),
                 "tp_stages_hit": 0,
+                "outcome_recorded": False,
                 "tp_stages": [
                     {"mult": tp1, "price": price * tp1, "ratio": tp1_ratio, "hit": False},
                     {"mult": tp2, "price": price * tp2, "ratio": tp2_ratio, "hit": False},
@@ -1220,14 +1222,18 @@ class AutonomousDemoTrader:
                 remaining_cost_basis = pos["invested_inr"] * remaining_ratio
                 net_pnl = net_recovered - remaining_cost_basis
 
+                self.realized_profit_inr += net_pnl
+                if not pos.get("outcome_recorded", False):
+                    if net_pnl >= 0:
+                        self.wins += 1
+                    else:
+                        self.losses += 1
+                    pos["outcome_recorded"] = True
+
                 if net_pnl >= 0:
-                    self.realized_profit_inr += net_pnl
-                    self.wins += 1
                     status_str = "PROFIT"
                     action_tag = f"TRAILING STOP ({pnl_pct:+.1f}%)"
                 else:
-                    self.realized_profit_inr += net_pnl
-                    self.losses += 1
                     status_str = "LOSS"
                     action_tag = f"STOP LOSS ({pnl_pct:+.1f}%)"
 
@@ -1323,7 +1329,9 @@ class AutonomousDemoTrader:
                     invested_part = pos["invested_inr"] * (tokens_to_sell / pos["initial_tokens"])
                     profit_gain = net_proceeds - invested_part
                     self.realized_profit_inr += profit_gain
-                    self.wins += 1
+                    if not pos.get("outcome_recorded", False):
+                        self.wins += 1
+                        pos["outcome_recorded"] = True
 
                     pos["remaining_tokens"] -= tokens_to_sell
                     stage["hit"] = True
@@ -1367,7 +1375,9 @@ class AutonomousDemoTrader:
                 refund_ata = pos["ata_locked_inr"]
                 self.locked_ata_rent_inr -= refund_ata
                 self.portfolio_inr += refund_ata
-                self.wins += 1
+                if not pos.get("outcome_recorded", False):
+                    self.wins += 1
+                    pos["outcome_recorded"] = True
 
                 # === NEW: Log winning trade to journal ===
                 category = self.journal.log_trade(

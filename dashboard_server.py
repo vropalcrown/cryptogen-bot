@@ -908,9 +908,11 @@ DASHBOARD_HTML = """
           }
 
           document.getElementById('sync-timer').innerText = `Updated: ${new Date().toLocaleTimeString()}`;
+        } else {
+          document.getElementById('sync-timer').innerText = "Syncing with cloud...";
         }
       } catch (e) {
-        document.getElementById('sync-timer').innerText = "Reconnecting...";
+        document.getElementById('sync-timer').innerText = "Syncing with cloud...";
       }
     }
 
