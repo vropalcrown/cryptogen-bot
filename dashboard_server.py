@@ -988,6 +988,12 @@ DASHBOARD_HTML = """
           const dodgedCnt = Number(shadow.dodged_crashes || 0);
           const missedCnt = Number(shadow.missed_runners || 0);
 
+          const shadowEl = document.getElementById('shadow-summary');
+          const shadowDetEl = document.getElementById('shadow-details');
+          const shadowListEl = document.getElementById('shadow-recent-list');
+          const auditDodgedEl = document.getElementById('audit-dodged-badge');
+          const auditMissedEl = document.getElementById('audit-missed-badge');
+
           if (shadowEl) {
             shadowEl.innerHTML = `<span style="color: var(--win-green);">${dodgedCnt} Dodged Crashes</span> • <span style="color: var(--gold);">${missedCnt} Missed Runners</span>`;
             if (shadowDetEl) {
@@ -1132,9 +1138,10 @@ DASHBOARD_HTML = """
 
           document.getElementById('sync-timer').innerText = `Updated: ${new Date().toLocaleTimeString()}`;
         } else {
-          document.getElementById('sync-timer').innerText = "Syncing with cloud...";
+          document.getElementById('sync-timer').innerText = `Sync status: HTTP ${res.status}`;
         }
       } catch (e) {
+        console.error("Dashboard refresh error:", e);
         document.getElementById('sync-timer').innerText = "Syncing with cloud...";
       }
     }
