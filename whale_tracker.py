@@ -1,11 +1,11 @@
 """
 CryptoGen Smart Money & Whale Wallet Tracker ("Shadow Trader")
 
-Monitors proven high-conviction Solana meme coin wallets using Helius RPC.
-When a tracked whale enters a trade:
+Monitors user-configured Solana smart money trader wallets using Helius RPC.
+When a configured whale enters a trade:
   1. Identifies the token mint purchased.
-  2. Runs it through our RugCheck, Dev Bundler, and AMM impact filters.
-  3. If safe, injects the token into candidate scanning with a +15% Whale Conviction Bonus.
+  2. Runs it through RugCheck, Dev Bundler, and AMM impact filters.
+  3. If safe, provides a modest +3% conviction bonus during candidate scanning.
 """
 
 import os
@@ -16,34 +16,28 @@ from typing import List, Dict
 
 load_dotenv()
 
-HELIUS_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+HELIUS_RPC_URL = os.getenv("SOLANA_RPC_URL", "").strip()
 
-# Curated registry of public top-performing Solana meme coin trader wallets
-# Users can add custom whale addresses in .env as TRACKED_WHALE_WALLETS=addr1,addr2
-DEFAULT_WHALE_WALLETS = [
-    "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",  # Raydium High-Activity Smart DEX Trader
-    "H8sT2neY9kL6c4VqM6gQyV4sA1xZ9vB3nC2mK5jL7pQ8",  # Active Pump.fun Momentum Whale
-    "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"   # Jupiter Aggregator High-Volume Trader
-]
 
 class WhaleTracker:
     def __init__(self):
-        env_whales = os.getenv("TRACKED_WHALE_WALLETS", "")
+        env_whales = os.getenv("TRACKED_WHALE_WALLETS", "").strip()
         if env_whales:
             self.tracked_wallets = [w.strip() for w in env_whales.split(",") if w.strip()]
         else:
-            self.tracked_wallets = DEFAULT_WHALE_WALLETS
+            self.tracked_wallets = []
 
         self.last_seen_signatures = {}
         self.cached_whale_tokens = []
         self.last_scan_time = 0.0
+        self.is_active = bool(HELIUS_RPC_URL and "helius" in HELIUS_RPC_URL.lower() and self.tracked_wallets)
 
     async def scan_whale_activity(self) -> List[Dict]:
         """
         Queries Helius RPC for recent transactions of tracked smart money wallets.
         Returns a list of candidate tokens purchased by whales in recent blocks.
         """
-        if not HELIUS_RPC_URL or "helius" not in HELIUS_RPC_URL.lower():
+        if not self.is_active:
             return []
 
         whale_discoveries = []
@@ -86,6 +80,6 @@ class WhaleTracker:
         Returns a +0.03 (3%) confidence bonus if a token was recently
         accumulated by a verified smart money wallet.
         """
-        if token_address in self.cached_whale_tokens:
+        if self.is_active and token_address in self.cached_whale_tokens:
             return 0.03
         return 0.0

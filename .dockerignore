@@ -1,0 +1,10 @@
+.env
+*.key
+*.pem
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+scratch/
+test_*.py

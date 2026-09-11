@@ -218,69 +218,8 @@ class AutonomousDemoTrader:
         except Exception:
             pass
 
-        # 3. Purge any stuck closed positions and deduplicate runaway history
-        if "9XCP3Es48MccofbwBM9ig18WnG8CMcivqzKH1VSJpump" in self.active_positions:
-            del self.active_positions["9XCP3Es48MccofbwBM9ig18WnG8CMcivqzKH1VSJpump"]
-
-        if hasattr(self, "trade_history") and self.trade_history:
-            clean_txs = []
-            seen_nvda = False
-            for tx in self.trade_history:
-                if tx.get("token") == "NVDA":
-                    if not seen_nvda:
-                        clean_txs.append(tx)
-                        seen_nvda = True
-                else:
-                    clean_txs.append(tx)
-            self.trade_history = clean_txs
-
-        # Seed initial session history if none restored
-        if not getattr(self, "trade_history", []):
-            self.trade_history = [
-                {
-                    "id": "tx_seed_1",
-                    "time": "17:15:20",
-                    "timestamp": time.time() - 3600,
-                    "token": "2500",
-                    "address": "97z8QxY7nZ29vLqF4p9VfL8E3k9XyZaBcDeFgHiJkLm",
-                    "action": "BUY",
-                    "price": 0.0001515,
-                    "size_inr": 11.20,
-                    "gain_loss_inr": 0.0,
-                    "fee_inr": 0.53,
-                    "money_left": 74.56,
-                    "status": "FILLED"
-                },
-                {
-                    "id": "tx_seed_2",
-                    "time": "17:35:10",
-                    "timestamp": time.time() - 2400,
-                    "token": "2500",
-                    "address": "97z8QxY7nZ29vLqF4p9VfL8E3k9XyZaBcDeFgHiJkLm",
-                    "action": "TP1 (+20.3%)",
-                    "price": 0.0001823,
-                    "size_inr": 13.50,
-                    "gain_loss_inr": 0.73,
-                    "fee_inr": 0.54,
-                    "money_left": 84.48,
-                    "status": "PROFIT"
-                }
-            ]
-            for addr, pos in self.active_positions.items():
-                self.trade_history.insert(0, {
-                    "id": f"tx_{int(pos.get('entry_time', time.time())*1000)}",
-                    "time": time.strftime("%H:%M:%S", time.localtime(pos.get("entry_time", time.time()))),
-                    "timestamp": pos.get("entry_time", time.time()),
-                    "token": pos["token"],
-                    "address": addr,
-                    "action": "BUY",
-                    "price": pos["entry_price"],
-                    "size_inr": round(pos.get("invested_inr", 10.49), 2),
-                    "gain_loss_inr": 0.0,
-                    "fee_inr": round(0.50 + (pos.get("invested_inr", 10.49) * 0.003), 2),
-                    "money_left": round(self.portfolio_inr, 2),
-                    "status": "OPEN"
-                })
+        if not hasattr(self, "trade_history") or not self.trade_history:
+            self.trade_history = []
 
         print(f"📦 [STATE RESTORED] Live Ledger: Money Left: INR {self.portfolio_inr:.2f} | Money Made: INR {self.realized_profit_inr:+.2f} | Positions: {len(self.active_positions)} | Transactions: {len(self.trade_history)}")
         self.dump_live_state()

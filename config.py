@@ -43,7 +43,7 @@ TARGET_BALANCE_INR = 1000.0
 SOL_TO_INR_ESTIMATE = 13000.0   # Current approximate SOL/INR exchange rate
 PERSONAL_WITHDRAWAL_WALLET = os.getenv("PERSONAL_SOLANA_WALLET", "")
 
-MAX_POSITION_PERCENT = 0.25     # Rule 1: 25% per trade (Monte Carlo #1: 98.6% Success Rate)
+MAX_POSITION_PERCENT = 0.25     # Rule 1: 25% max position per trade
 MIN_TRADE_SIZE_INR = 20.0       # Minimum ₹20 size so Solana gas fee is never >5%
 STOP_LOSS_PERCENT = 0.10        # Rule 2: -10% stop loss
 EMERGENCY_RESERVE_INR = 15.0    # Rule 6: ₹15 reserve locked for gas

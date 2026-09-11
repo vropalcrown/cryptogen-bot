@@ -299,10 +299,13 @@ DASHBOARD_HTML = """
           <span id="bot-status">PAPER TRADING • ACTIVE</span>
         </div>
         <span style="font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;" id="sync-timer">Auto-syncing: live</span>
-      </div>
     </header>
 
-    <!-- Top Ledger Metrics: Money Left, Money Invested, Money Made, Fees Paid -->
+    <!-- Simulation Transparency Banner -->
+    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); color: #FBBF24; padding: 10px 16px; border-radius: 12px; margin-bottom: 20px; font-size: 12.5px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+      <span>⚠️ <b>EXECUTION STATE: VIRTUAL SIMULATION PROTOCOL</b> • Operating in sandbox paper simulation. ₹0.00 real currency at risk.</span>
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 6px;">On-Chain SOL: 0.0000 SOL</span>
+    </div>
     <div class="grid">
       <div class="card" style="border-left: 4px solid var(--accent-cyan);">
         <div class="card-title">💰 Money Left (Wallet)</div>
@@ -688,6 +691,17 @@ DASHBOARD_HTML = """
   </div>
 
   <script>
+    // HTML Sanitizer to prevent Stored / Reflected XSS
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
     // Live Auto-Refresh every 3 seconds (ZERO manual reload needed!)
     async function refreshData() {
       try {
@@ -886,16 +900,17 @@ DASHBOARD_HTML = """
             tbody.innerHTML = positions.map(p => {
               const pnlClass = p.pnl_pct >= 0 ? 'tag-green' : 'tag-red';
               const pnlSign = p.pnl_pct >= 0 ? '+' : '';
-              const addr = p.address || '';
+              const addr = escapeHtml(p.address || '');
+              const tokenSafe = escapeHtml(p.token || '');
               return `
                 <tr>
-                  <td><b class="token-clickable" onclick="openChartModal('${addr}', '${p.token}')" title="Click to view interactive chart">📈 ${p.token}</b></td>
-                  <td>₹${Number(p.invested_inr).toFixed(2)}</td>
-                  <td>$${Number(p.curr_price).toFixed(8)}</td>
-                  <td style="color: var(--gold);">$${Number(p.stop_loss).toFixed(8)}</td>
-                  <td><span class="tag ${pnlClass}">${pnlSign}${Number(p.pnl_pct).toFixed(1)}%</span></td>
+                  <td><b class="token-clickable" onclick="openChartModal('${addr}', '${tokenSafe}')" title="Click to view interactive chart">📈 ${tokenSafe}</b></td>
+                  <td>₹${Number(p.invested_inr || 0).toFixed(2)}</td>
+                  <td>$${Number(p.curr_price || 0).toFixed(8)}</td>
+                  <td style="color: var(--gold);">$${Number(p.stop_loss || 0).toFixed(8)}</td>
+                  <td><span class="tag ${pnlClass}">${pnlSign}${Number(p.pnl_pct || 0).toFixed(1)}%</span></td>
                   <td>
-                    <button class="btn-chart" onclick="openChartModal('${addr}', '${p.token}')">
+                    <button class="btn-chart" onclick="openChartModal('${addr}', '${tokenSafe}')">
                       📊 Chart
                     </button>
                   </td>
@@ -943,19 +958,22 @@ DASHBOARD_HTML = """
                   pnlDisplay = `${pnlSign}INR ${pnlVal.toFixed(2)}`;
                 }
 
-                const tAddr = t.address || '';
+                const tAddr = escapeHtml(t.address || '');
+                const tToken = escapeHtml(t.token || '');
+                const tAction = escapeHtml(t.action || '');
+                const tTime = escapeHtml(t.time || '');
                 return `
                   <tr>
-                    <td style="color: #9CA3AF; font-size: 11px;">${t.time || ''}</td>
-                    <td><b class="token-clickable" onclick="openChartModal('${tAddr}', '${t.token}')" title="Click to view interactive chart">📈 ${t.token}</b></td>
-                    <td><span class="tag ${actionTag}">${t.action}</span></td>
+                    <td style="color: #9CA3AF; font-size: 11px;">${tTime}</td>
+                    <td><b class="token-clickable" onclick="openChartModal('${tAddr}', '${tToken}')" title="Click to view interactive chart">📈 ${tToken}</b></td>
+                    <td><span class="tag ${actionTag}">${tAction}</span></td>
                     <td>₹${Number(t.size_inr || 0).toFixed(2)}</td>
                     <td>$${Number(t.price || 0).toFixed(8)}</td>
                     <td style="${pnlStyle}">${pnlDisplay}</td>
                     <td style="color: var(--gold);">₹${Number(t.fee_inr || 0).toFixed(2)}</td>
                     <td style="color: var(--accent-cyan); font-weight: 700;">₹${Number(t.money_left || 0).toFixed(2)}</td>
                     <td>
-                      <button class="btn-chart" onclick="openChartModal('${tAddr}', '${t.token}')">
+                      <button class="btn-chart" onclick="openChartModal('${tAddr}', '${tToken}')">
                         📊 Chart
                       </button>
                     </td>
@@ -965,41 +983,10 @@ DASHBOARD_HTML = """
             }
           }
 
-          // Shadow Watchlist Dynamic Re-render with Client Vault Persistence
-          let clientVault = {};
-          try {
-            clientVault = JSON.parse(localStorage.getItem('cryptogen_vault') || '{}');
-          } catch(e){}
-
+          // Shadow Watchlist Dynamic Re-render (Honest real-time counts)
           let shadow = data.shadow_stats || {};
-          // If server reports lower metrics due to restart, keep client vault metrics
-          if (clientVault.shadow && (shadow.dodged_crashes || 0) < (clientVault.shadow.dodged_crashes || 0)) {
-            shadow.dodged_crashes = clientVault.shadow.dodged_crashes;
-            shadow.total_tracked = Math.max(shadow.total_tracked || 0, clientVault.shadow.total_tracked || 0);
-            if (!shadow.recent_outcomes || shadow.recent_outcomes.length === 0) {
-              shadow.recent_outcomes = clientVault.shadow.recent_outcomes || [];
-            }
-          }
-          // Seed floor protection: ensure dodged crashes never drop below 72
-          if ((shadow.dodged_crashes || 0) < 72) {
-            shadow.dodged_crashes = 72;
-            shadow.total_tracked = Math.max(shadow.total_tracked || 0, 85);
-          }
-
-          // Save highest state into client vault
-          clientVault.shadow = shadow;
-          try {
-            localStorage.setItem('cryptogen_vault', JSON.stringify(clientVault));
-          } catch(e){}
-
-          const shadowEl = document.getElementById('shadow-summary');
-          const shadowDetEl = document.getElementById('shadow-details');
-          const shadowListEl = document.getElementById('shadow-recent-list');
-          const auditDodgedEl = document.getElementById('audit-dodged-badge');
-          const auditMissedEl = document.getElementById('audit-missed-badge');
-
-          const dodgedCnt = shadow.dodged_crashes || 72;
-          const missedCnt = shadow.missed_runners || 0;
+          const dodgedCnt = Number(shadow.dodged_crashes || 0);
+          const missedCnt = Number(shadow.missed_runners || 0);
 
           if (shadowEl) {
             shadowEl.innerHTML = `<span style="color: var(--win-green);">${dodgedCnt} Dodged Crashes</span> • <span style="color: var(--gold);">${missedCnt} Missed Runners</span>`;
@@ -1022,9 +1009,11 @@ DASHBOARD_HTML = """
                 const col = isDodge ? 'var(--win-green)' : 'var(--gold)';
                 const icon = isDodge ? '🛡️' : '🚀';
                 const sign = item.pnl_pct >= 0 ? '+' : '';
+                const sym = escapeHtml(item.symbol || '');
+                const timeStr = escapeHtml(item.time || '');
                 return `
                   <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.03); padding: 5px 10px; border-radius: 6px; border-left: 3px solid ${col}; font-size: 11px;">
-                    <span><b>${icon} ${item.symbol}</b> <span style="color: var(--text-muted); font-size: 10px;">(${item.time})</span></span>
+                    <span><b>${icon} ${sym}</b> <span style="color: var(--text-muted); font-size: 10px;">(${timeStr})</span></span>
                     <span style="color: ${col}; font-weight: 700;">${sign}${item.pnl_pct}% (${isDodge ? 'Dodged Scam' : 'Runner'})</span>
                   </div>
                 `;
@@ -1046,12 +1035,14 @@ DASHBOARD_HTML = """
                 const tagIcon = isDodge ? '🛡️ DODGED' : '🚀 RUNNER';
                 const pnlSign = item.pnl_pct >= 0 ? '+' : '';
                 const pnlColor = item.pnl_pct >= 0 ? 'var(--win-green)' : 'var(--loss-red)';
-                const reasonText = item.filter || item.reason || 'Safety Filter';
+                const reasonText = escapeHtml(item.filter || item.reason || 'Safety Filter');
+                const sym = escapeHtml(item.symbol || '');
+                const timeStr = escapeHtml(item.time || '');
 
                 return `
                   <tr>
-                    <td style="color: #9CA3AF; font-size: 11px;">${item.time || ''}</td>
-                    <td><b>${item.symbol}</b></td>
+                    <td style="color: #9CA3AF; font-size: 11px;">${timeStr}</td>
+                    <td><b>${sym}</b></td>
                     <td><span class="tag ${tagClass}">${tagIcon}</span></td>
                     <td style="color: ${pnlColor}; font-weight: 700;">${pnlSign}${Number(item.pnl_pct).toFixed(1)}%</td>
                     <td style="color: #D1D5DB; font-size: 11px;">${reasonText}</td>
@@ -1075,10 +1066,11 @@ DASHBOARD_HTML = """
                 const pnl = Number(item.pnl_pct || 0);
                 const pnlSign = pnl >= 0 ? '+' : '';
                 const pnlClass = pnl >= 0 ? 'tag-green' : (pnl <= -35 ? 'tag-red' : 'tag-gold');
+                const sym = escapeHtml(item.symbol || '');
 
                 return `
                   <tr>
-                    <td><b>${item.symbol}</b></td>
+                    <td><b>${sym}</b></td>
                     <td style="color: #9CA3AF;">$${Number(item.rejection_price).toFixed(8)}</td>
                     <td>$${Number(item.curr_price).toFixed(8)}</td>
                     <td><span class="tag ${pnlClass}">${pnlSign}${pnl.toFixed(1)}%</span></td>
@@ -1113,10 +1105,10 @@ DASHBOARD_HTML = """
           }
           if (feedEl && feed.length > 0) {
             feedEl.innerHTML = feed.map(item => {
-              const msg = item.message || '';
-              const isBlocked = msg.includes('Filtered') || msg.includes('Risk') || msg.includes('Top wallet') || msg.includes('Wash');
-              const isEval = msg.includes('Evaluated') || msg.includes('bar');
-              const isRunner = msg.includes('runner') || msg.includes('Hit') || msg.includes('Surged') || msg.includes('BUY');
+              const rawMsg = item.message || '';
+              const isBlocked = rawMsg.includes('Filtered') || rawMsg.includes('Risk') || rawMsg.includes('Top wallet') || rawMsg.includes('Wash');
+              const isEval = rawMsg.includes('Evaluated') || rawMsg.includes('bar');
+              const isRunner = rawMsg.includes('runner') || rawMsg.includes('Hit') || rawMsg.includes('Surged') || rawMsg.includes('BUY');
               
               let tagColor = 'var(--accent-cyan)';
               let tagText = '[AUDIT]  ';
@@ -1124,11 +1116,15 @@ DASHBOARD_HTML = """
               else if (isEval) { tagColor = 'var(--gold)'; tagText = '[EVAL]   '; }
               else if (isRunner) { tagColor = 'var(--accent-sol)'; tagText = '[RUNNER] '; }
 
+              const msg = escapeHtml(rawMsg);
+              const fTime = escapeHtml(item.time || '');
+              const fIcon = escapeHtml(item.icon || '⚡');
+
               return `
                 <div style="display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.03); font-family: 'JetBrains Mono', monospace; font-size: 12px;">
-                  <span style="color: #6B7280; font-size: 11px;">[${item.time}]</span>
+                  <span style="color: #6B7280; font-size: 11px;">[${fTime}]</span>
                   <span style="color: ${tagColor}; font-weight: 700; font-size: 11px;">${tagText}</span>
-                  <span style="color: #F3F4F6;">${item.icon || '⚡'} ${msg}</span>
+                  <span style="color: #F3F4F6;">${fIcon} ${msg}</span>
                 </div>
               `;
             }).join('');
@@ -1182,15 +1178,30 @@ DASHBOARD_HTML = """
 
     async function triggerControl(action) {
       try {
+        let token = sessionStorage.getItem('cryptogen_admin_token') || '';
+        if (!token) {
+          token = prompt('Enter Admin Token to execute bot command:');
+          if (!token) return;
+          sessionStorage.setItem('cryptogen_admin_token', token.trim());
+          token = token.trim();
+        }
         const res = await fetch('/api/control', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action: action})
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({action: action, token: token})
         });
         const d = await res.json();
+        if (res.status === 401) {
+          sessionStorage.removeItem('cryptogen_admin_token');
+          alert('Unauthorized: Invalid Admin Token. Access denied.');
+          return;
+        }
         alert(`Command ${action} status: ${d.message || d.status || 'Executed'}`);
       } catch (e) {
-        alert(`Sent command ${action} to bot via Telegram channel!`);
+        alert(`Error executing command ${action}: ${e.message}`);
       }
     }
 
@@ -1204,14 +1215,32 @@ DASHBOARD_HTML = """
 
 GLOBAL_TRADER_REF = None
 
+import secrets
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
+if not ADMIN_TOKEN:
+    ADMIN_TOKEN = secrets.token_hex(16)
+    print(f"🔑 [SECURITY] Ephemeral Session Admin Token: {ADMIN_TOKEN}")
+
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", ADMIN_TOKEN).strip()
+
 def set_trader_instance(trader):
     global GLOBAL_TRADER_REF
     GLOBAL_TRADER_REF = trader
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def _send_security_headers(self, status=200, content_type="text/html; charset=utf-8"):
+        self.send_response(status)
+        self.send_header("Content-type", content_type)
+        self.send_header("Content-Security-Policy", "default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://dexscreener.com; frame-src https://dexscreener.com; img-src 'self' data: https:;")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+
     def do_HEAD(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html; charset=utf-8")
+        self._send_security_headers(200, "text/html; charset=utf-8")
         self.end_headers()
 
     def do_POST(self):
@@ -1223,14 +1252,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
+        auth_header = self.headers.get("Authorization", "")
+        auth_token = auth_header.replace("Bearer ", "").strip() if auth_header.startswith("Bearer ") else ""
+
         if self.path == "/api/webhook":
-            # OpenAlgo / TradingView Webhook Bridge
-            secret = os.getenv("WEBHOOK_SECRET")
-            if secret and payload.get("secret") != secret:
-                self.send_response(401)
-                self.send_header("Content-type", "application/json")
+            # OpenAlgo / TradingView Webhook Bridge - Requires Authentication
+            req_secret = payload.get("secret") or auth_token
+            if not req_secret or req_secret != WEBHOOK_SECRET:
+                self._send_security_headers(401, "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"status": "REJECTED", "reason": "Invalid webhook secret"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"status": "REJECTED", "reason": "Unauthorized: Valid webhook secret required"}).encode("utf-8"))
                 return
 
             if GLOBAL_TRADER_REF:
@@ -1258,12 +1289,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 }
 
             status_code = 200 if result.get("status") in ("APPROVED_AND_FILLED", "SUCCESS", "QUEUED") else 400
-            self.send_response(status_code)
-            self.send_header("Content-type", "application/json")
+            self._send_security_headers(status_code, "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(result).encode("utf-8"))
 
         elif self.path == "/api/control":
+            # Admin Bot Controls - Requires Authentication
+            req_token = payload.get("token") or payload.get("secret") or auth_token
+            if not req_token or req_token != ADMIN_TOKEN:
+                self._send_security_headers(401, "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "REJECTED", "reason": "Unauthorized: Valid admin token required"}).encode("utf-8"))
+                return
+
             action = payload.get("action", "").lower()
             resp = {"status": "OK", "action": action}
             if GLOBAL_TRADER_REF:
@@ -1296,30 +1334,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     resp = {"status": "ERROR", "reason": str(e)}
 
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
+            self._send_security_headers(200, "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(resp).encode("utf-8"))
 
         else:
-            self.send_response(404)
+            self._send_security_headers(404, "application/json")
             self.end_headers()
+            self.wfile.write(b'{"error": "Not found"}')
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
-            self.send_response(200)
-            self.send_header("Content-type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-            self.send_header("Pragma", "no-cache")
-            self.send_header("Expires", "0")
+            self._send_security_headers(200, "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
         elif self.path == "/api/state":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-            self.send_header("Pragma", "no-cache")
-            self.send_header("Expires", "0")
+            self._send_security_headers(200, "application/json")
             self.end_headers()
 
             state = {
@@ -1379,68 +1409,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     elif isinstance(cl_pos, list):
                         state["positions"] = cl_pos
 
-            # Persistence Safeguard: Never serve reset or zeroed shadow metrics
-            cur_shadow = state.get("shadow_stats") or {}
-            if cur_shadow.get("dodged_crashes", 0) < 72:
-                cloud_dodged = cloud.get("dodged_crashes", 72) if cloud else 72
-                cloud_tracked = cloud.get("total_tracked", 85) if cloud else 85
-                state["shadow_stats"] = {
-                    "active_monitoring": cur_shadow.get("active_monitoring", 0),
-                    "total_tracked": max(cloud_tracked, 85),
-                    "dodged_crashes": max(cloud_dodged, 72),
-                    "missed_runners": cloud.get("missed_runners", 0) if cloud else 0,
-                    "auto_retrained": cloud.get("auto_retrained", 0) if cloud else 0,
-                    "recent_outcomes": cloud.get("recent_outcomes", []) if cloud else []
-                }
-
-            # Persistence Safeguard for Transactions Ledger
+            # Honest persistence restore without artificial floors or fake trades
             if "transactions" not in state or not state["transactions"]:
                 cloud = load_cloud_state_sync()
                 if cloud and cloud.get("transactions"):
                     state["transactions"] = cloud["transactions"]
                 else:
-                    state["transactions"] = [
-                        {
-                            "id": "tx_seed_1",
-                            "time": "17:15:20",
-                            "token": "2500",
-                            "address": "97z8QxY7nZ29vLqF4p9VfL8E3k9XyZaBcDeFgHiJkLm",
-                            "action": "BUY",
-                            "price": 0.0001515,
-                            "size_inr": 11.20,
-                            "gain_loss_inr": 0.0,
-                            "fee_inr": 0.53,
-                            "money_left": 74.56,
-                            "status": "FILLED"
-                        },
-                        {
-                            "id": "tx_seed_2",
-                            "time": "17:35:10",
-                            "token": "2500",
-                            "address": "97z8QxY7nZ29vLqF4p9VfL8E3k9XyZaBcDeFgHiJkLm",
-                            "action": "TP1 (+20.3%)",
-                            "price": 0.0001823,
-                            "size_inr": 13.50,
-                            "gain_loss_inr": 0.73,
-                            "fee_inr": 0.54,
-                            "money_left": 84.48,
-                            "status": "PROFIT"
-                        }
-                    ]
-                    for pos in state.get("positions", []):
-                        state["transactions"].insert(0, {
-                            "id": "tx_open_1",
-                            "time": "17:48:34",
-                            "token": pos.get("token", "TOKEN"),
-                            "address": pos.get("address", ""),
-                            "action": "BUY",
-                            "price": pos.get("entry_price", 0.0),
-                            "size_inr": round(pos.get("invested_inr", 10.49), 2),
-                            "gain_loss_inr": 0.0,
-                            "fee_inr": round(0.50 + (pos.get("invested_inr", 10.49) * 0.003), 2),
-                            "money_left": round(state.get("money_left", 83.98), 2),
-                            "status": "OPEN"
-                        })
+                    state["transactions"] = []
 
             self.wfile.write(json.dumps(state).encode("utf-8"))
         else:

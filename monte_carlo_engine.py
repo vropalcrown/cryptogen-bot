@@ -53,6 +53,15 @@ def simulate_path(
         if pos_size < 5.0:
             pos_size = 5.0
 
+        # Realistic Solana DEX micro-capital friction:
+        # 1. Pool AMM Fee: 0.3% entry + 0.3% exit = 0.6% of position
+        amm_fee = pos_size * 0.006
+        # 2. Market slippage: 0.8% average round-trip
+        slippage = pos_size * 0.008
+        # 3. Base + priority gas: ~₹0.50 per transaction (2 txs = ₹1.00 total)
+        gas_cost = 1.00
+        round_trip_friction = amm_fee + slippage + gas_cost
+
         is_win = np.random.rand() < win_rate
 
         if is_win:
@@ -68,8 +77,7 @@ def simulate_path(
                 # Moonshot runner hit! Stage 1 + 2 + 3 (+25%, +60%, +200%)
                 gain = pos_size * (tp1_pct * tp1_ratio + tp2_pct * tp2_ratio + tp3_pct * 0.20)
 
-            # Deduct standard Solana DEX gas (~₹0.15) & rent reclaimed
-            net_gain = gain - 0.15
+            net_gain = gain - round_trip_friction
             nw += net_gain
         else:
             # Loss: Stop-loss triggered or rug pull
@@ -81,7 +89,7 @@ def simulate_path(
                 # Standard ratcheted stop-loss hit
                 loss = pos_size * abs(sl_pct)
 
-            net_loss = loss + 0.15
+            net_loss = loss + round_trip_friction
             nw -= net_loss
 
         # Track drawdown

@@ -89,74 +89,28 @@ class CryptoGenBrain:
             json.dump(state, f, indent=2)
 
     def _load_or_bootstrap_model(self):
-        if os.path.exists(MODEL_FILE) and os.path.exists(MEMORY_FILE):
+        if os.path.exists(MEMORY_FILE):
             try:
-                self.model = joblib.load(MODEL_FILE)
-                self.is_trained = True
-                self._update_feature_importance()
-                print(f"🧠 [Smart Brain v2] Loaded trained model. "
-                      f"Adaptive threshold: {self.adaptive_threshold*100:.0f}% | "
-                      f"Real trades learned: {self.total_real_trades}")
-                return
+                df = pd.read_csv(MEMORY_FILE)
+                if len(df) >= 10 and "label" in df.columns:
+                    X = df[self.feature_columns]
+                    y = df["label"]
+                    self.model.fit(X, y)
+                    try:
+                        self.boost_model.fit(X, y)
+                    except Exception:
+                        pass
+                    self.is_trained = True
+                    joblib.dump(self.model, MODEL_FILE)
+                    self._update_feature_importance()
+                    print(f"🧠 [Smart Brain v2] Trained and calibrated on {len(df)} authentic historical market observations.")
+                    return
             except Exception as e:
-                print(f"⚠️ [Smart Brain v2] Could not load model: {e}")
+                print(f"⚠️ [Smart Brain v2] Notice fitting memory dataset: {e}")
 
-        print("🧠 [Smart Brain v2] Training deep multi-theory model from quantitative baseline...")
-        self._train_bootstrap_model()
-
-    def _train_bootstrap_model(self):
-        np.random.seed(42)
-        n_samples = 5000
-
-        buy_ratio_5m = np.random.uniform(0.15, 0.90, n_samples)
-        buy_ratio_1h = np.random.uniform(0.25, 0.85, n_samples)
-        ofi_5m = (buy_ratio_5m - 0.5) * 2.0
-        vol_accel = np.random.exponential(1.4, n_samples)
-        p_chg_5m = np.random.normal(2.0, 12.0, n_samples)
-        p_chg_1h = np.random.normal(4.0, 25.0, n_samples)
-        liq_to_fdv = np.random.uniform(0.01, 0.40, n_samples)
-        liquidity = np.random.uniform(2500, 80000, n_samples)
-        wash_score = np.random.uniform(0.0, 100.0, n_samples)
-
-        labels = (
-            (buy_ratio_5m > 0.60) &
-            (ofi_5m > 0.20) &
-            (vol_accel > 1.35) &
-            (liq_to_fdv > 0.07) &
-            (liquidity >= 5000) &
-            (wash_score < 35.0) &
-            (p_chg_5m >= -4.0)
-        ).astype(int)
-
-        df = pd.DataFrame({
-            "buy_ratio_5m": buy_ratio_5m,
-            "buy_ratio_1h": buy_ratio_1h,
-            "ofi_5m": ofi_5m,
-            "vol_acceleration": vol_accel,
-            "price_change_5m": p_chg_5m,
-            "price_change_1h": p_chg_1h,
-            "liq_to_fdv": liq_to_fdv,
-            "liquidity_usd": liquidity,
-            "wash_score": wash_score,
-            "label": labels
-        })
-
-        df.to_csv(MEMORY_FILE, index=False)
-
-        X = df[self.feature_columns]
-        y = df["label"]
-
-        self.model.fit(X, y)
-        # Also train boost model
-        try:
-            self.boost_model.fit(X, y)
-        except Exception:
-            pass
-
-        self.is_trained = True
-        joblib.dump(self.model, MODEL_FILE)
-        self._update_feature_importance()
-        print(f"🧠 [Smart Brain v2] Trained on {n_samples} scenarios. Feature importance computed.")
+        # If no genuine historical memory exists yet, operate on calibrated quantitative heuristics
+        self.is_trained = False
+        print("🧠 [Smart Brain v2] Cold-start: Operating on calibrated quantitative heuristics until sufficient organic trade observations accumulate.")
 
     def _update_feature_importance(self):
         """Extract and store which features matter most."""
