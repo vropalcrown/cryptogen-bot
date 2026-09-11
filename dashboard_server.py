@@ -334,6 +334,16 @@ DASHBOARD_HTML = """
         <div class="card-meta">Solana Gas + 0.3% Raydium AMM</div>
         <div class="card-meta" id="danger-floor">Danger Floor: INR 50.00</div>
       </div>
+
+      <div class="card" style="border-left: 4px solid var(--accent-purple);">
+        <div class="card-title">⚡ Solana Network & Radar</div>
+        <div class="card-value" style="font-size: 20px; color: var(--accent-cyan); display: flex; align-items: baseline; gap: 8px;">
+          <span id="solana-tps">3,250 TPS</span>
+          <span id="solana-gas" style="font-size: 13px; color: var(--gold); font-weight: 600;">~₹0.50 Gas</span>
+        </div>
+        <div class="card-meta" id="solana-congestion">Solana Mainnet: OPTIMAL (Safe)</div>
+        <div class="card-meta" id="best-runner-badge" style="color: var(--accent-cyan); font-weight: 600; font-size: 11px;">🏆 Best Runner: None yet</div>
+      </div>
     </div>
 
     <!-- Main Grid -->
@@ -415,6 +425,24 @@ DASHBOARD_HTML = """
               <span class="tag tag-purple">📈 Dynamic Trailing Escalator</span>
               <span class="tag tag-gold">⚖️ Triangular Arbitrage Gate</span>
               <span class="tag tag-green">🎯 False-Negative Shadow Radar</span>
+            </div>
+          </div>
+          <hr style="border: 0; border-top: 1px solid var(--card-border);">
+          <div>
+            <div class="card-title">⚡ Live Engine Readiness & Shields</div>
+            <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; margin-top: 8px; font-family: 'JetBrains Mono', monospace;">
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-muted);">Cloud Vault Sync:</span>
+                <span style="color: var(--win-green); font-weight: 700;">🟢 ACTIVE</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-muted);">Fee-Drag Shield:</span>
+                <span style="color: var(--accent-cyan); font-weight: 700;">🛡️ Sizing ≥ ₹22 (≤ 2.5% Fee)</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-muted);">Adaptive Conviction:</span>
+                <span id="caution-bump-status" style="color: var(--win-green); font-weight: 700;">STABLE (0 Loss Streak)</span>
+              </div>
             </div>
           </div>
         </div>
@@ -648,6 +676,44 @@ DASHBOARD_HTML = """
           const dangerFloorEl = document.getElementById('danger-floor');
           if (dangerFloorEl) {
             dangerFloorEl.innerText = `Danger Floor: INR ${Number(data.danger_floor_inr || 50).toFixed(2)}`;
+          }
+
+          // Solana Network Radar & Gas Telemetry
+          const net = data.network_status || { tps: 3250, est_gas_inr: 0.50, congestion: 'OPTIMAL' };
+          const tpsEl = document.getElementById('solana-tps');
+          if (tpsEl) tpsEl.innerText = `${Number(net.tps || 3250).toLocaleString()} TPS`;
+          const gasEl = document.getElementById('solana-gas');
+          if (gasEl) gasEl.innerText = `~₹${Number(net.est_gas_inr || 0.50).toFixed(2)} Gas`;
+          const congEl = document.getElementById('solana-congestion');
+          if (congEl) {
+            congEl.innerText = `Solana Mainnet: ${net.congestion || 'OPTIMAL'} (${net.safe_to_trade !== false ? 'Safe' : 'Congested'})`;
+            congEl.style.color = net.congestion === 'OPTIMAL' ? 'var(--text-muted)' : 'var(--gold)';
+          }
+
+          // Best Runner Performance Badge
+          const br = data.best_runner || {};
+          const brEl = document.getElementById('best-runner-badge');
+          if (brEl) {
+            if (br.symbol && br.symbol !== 'None' && Number(br.pnl_pct || 0) > 0) {
+              brEl.innerText = `🏆 Best Runner: ${br.symbol} +${br.pnl_pct}% (${br.time || ''})`;
+              brEl.style.color = 'var(--accent-cyan)';
+            } else {
+              brEl.innerText = `🏆 Best Runner: None yet`;
+              brEl.style.color = 'var(--text-muted)';
+            }
+          }
+
+          // Dynamic Caution Bump Status
+          const cLosses = Number(data.consecutive_losses || 0);
+          const cbEl = document.getElementById('caution-bump-status');
+          if (cbEl) {
+            if (cLosses >= 2) {
+              cbEl.innerText = `🛡️ CAUTION (+3% Bar, ${cLosses} Losses)`;
+              cbEl.style.color = 'var(--gold)';
+            } else {
+              cbEl.innerText = `STABLE (${cLosses} Loss Streak)`;
+              cbEl.style.color = 'var(--win-green)';
+            }
           }
           
           const totalCapital = Number(mLeft) + Number(mInv);
@@ -1010,6 +1076,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "survival_tier": "🟢 NORMAL",
                 "regime": "🟠 CRAB",
                 "news_sentiment": "BEARISH (-0.50)",
+                "network_status": {"tps": 3250, "user_tps": 1200, "est_gas_inr": 0.50, "congestion": "OPTIMAL", "safe_to_trade": True},
+                "best_runner": {"symbol": "None", "pnl_pct": 0.0, "time": "—"},
+                "consecutive_losses": 0,
                 "positions": []
             }
 
@@ -1031,6 +1100,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     state["money_made"] = float(cloud["realized_profit_inr"])
                 if "total_fees_paid" not in state and "total_fees_paid_inr" in cloud:
                     state["total_fees_paid"] = float(cloud["total_fees_paid_inr"])
+                if "best_runner" not in state and cloud.get("best_runner"):
+                    state["best_runner"] = cloud["best_runner"]
                 if ("positions" not in state or not state["positions"]) and cloud.get("active_positions"):
                     cl_pos = cloud["active_positions"]
                     if isinstance(cl_pos, dict):

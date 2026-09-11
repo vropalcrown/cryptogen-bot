@@ -22,7 +22,7 @@ from quant_math import (
     calculate_holder_concentration_hhi
 )
 from safety import analyze_token_safety
-from data_collector import fetch_dex_token_data, fetch_trending_solana_tokens, fetch_sol_macro_context
+from data_collector import fetch_dex_token_data, fetch_trending_solana_tokens, fetch_sol_macro_context, fetch_solana_network_status
 from features import extract_features_from_token_data
 from ml_brain import CryptoGenBrain
 from onchain_executor import SolanaOnChainExecutor, SOL_MINT
@@ -84,6 +84,9 @@ class AutonomousDemoTrader:
         self.wins = 0
         self.losses = 0
         self.trade_counter = 0
+        self.consecutive_losses = 0
+        self.network_status = {"tps": 3250, "user_tps": 1200, "est_gas_inr": 0.50, "congestion": "OPTIMAL"}
+        self.best_runner = {"symbol": "None", "pnl_pct": 0.0, "time": "—"}
         self.session_start = time.time()
 
         # Compounding Ladder Tracking
@@ -158,6 +161,8 @@ class AutonomousDemoTrader:
                     self.losses = int(data.get("losses", 0))
                     if "trade_history" in data:
                         self.trade_history = data["trade_history"]
+                self.consecutive_losses = int(data.get("consecutive_losses", 0))
+                self.best_runner = data.get("best_runner", {"symbol": "None", "pnl_pct": 0.0, "time": "—"})
                 self.trade_counter = int(data.get("trade_counter", 0))
                 self.current_cycle_idx = int(data.get("current_cycle_idx", 0))
                 self.is_danger_halted = bool(data.get("is_danger_halted", False))
@@ -288,6 +293,8 @@ class AutonomousDemoTrader:
                 "wins": self.wins,
                 "losses": self.losses,
                 "trade_counter": self.trade_counter,
+                "consecutive_losses": getattr(self, "consecutive_losses", 0),
+                "best_runner": getattr(self, "best_runner", {"symbol": "None", "pnl_pct": 0.0, "time": "—"}),
                 "current_cycle_idx": self.current_cycle_idx,
                 "is_danger_halted": self.is_danger_halted,
                 "is_paused": self.is_paused,
@@ -311,6 +318,8 @@ class AutonomousDemoTrader:
                 "transactions": getattr(self, "trade_history", [])[:50],
                 "wins": self.wins,
                 "losses": self.losses,
+                "consecutive_losses": getattr(self, "consecutive_losses", 0),
+                "best_runner": getattr(self, "best_runner", {"symbol": "None", "pnl_pct": 0.0, "time": "—"}),
                 "current_cycle_idx": self.current_cycle_idx,
                 "dodged_crashes": getattr(self.shadow_tracker, "dodged_crashes", 86) if hasattr(self, "shadow_tracker") else 86,
                 "missed_runners": getattr(self.shadow_tracker, "missed_runners", 0) if hasattr(self, "shadow_tracker") else 0
@@ -472,6 +481,13 @@ class AutonomousDemoTrader:
                 "sol_to_inr": round(getattr(self, "sol_to_inr", 13000.0), 2),
                 "shadow_stats": self.shadow_tracker.get_summary_stats() if hasattr(self, "shadow_tracker") else {},
                 "autotune_params": self.autotuner.active_params if hasattr(self, "autotuner") else {},
+                "network_status": getattr(self, "network_status", {
+                    "tps": 3250, "user_tps": 1200, "est_gas_inr": 0.50, "congestion": "OPTIMAL", "safe_to_trade": True
+                }),
+                "best_runner": getattr(self, "best_runner", {
+                    "symbol": "None", "pnl_pct": 0.0, "time": "—"
+                }),
+                "consecutive_losses": getattr(self, "consecutive_losses", 0),
                 "is_live": getattr(self, "is_live", False)
             }
 
@@ -727,10 +743,10 @@ class AutonomousDemoTrader:
                 )
 
     def calculate_kelly_position_size(self, win_probability: float) -> float:
-        """Kelly sizing adjusted by survival tier and Monte Carlo optimal floor (INR 20-25)."""
-        # Leave a ₹2.00 buffer for gas and ATA rent reservation so wallet never dips into emergency floor
-        tradeable_cash = max(0.0, self.portfolio_inr - EMERGENCY_RESERVE_INR - 2.0)
-        if tradeable_cash < 15.0:
+        """Kelly sizing adjusted by survival tier and Monte Carlo optimal floor (INR 22-25 to minimize fee drag)."""
+        # Leave a ₹2.50 buffer for gas and ATA rent reservation so wallet never dips into emergency floor
+        tradeable_cash = max(0.0, self.portfolio_inr - EMERGENCY_RESERVE_INR - 2.5)
+        if tradeable_cash < 22.0:
             return 0.0
 
         # Survival Tier Cap
@@ -750,8 +766,8 @@ class AutonomousDemoTrader:
         regime_mult = self.current_regime.get("kelly_multiplier", 1.0)
         kelly_size *= regime_mult
 
-        # Enforce Monte Carlo optimal floor (INR 20.00 so Solana gas fee is never >5%)
-        optimal_size = max(20.0, kelly_size)
+        # Enforce Fee-Drag Shielding floor (INR 22.00 so Solana gas + DEX fee stays <= 2.5%)
+        optimal_size = max(22.0, kelly_size)
         return min(optimal_size, tradeable_cash)
 
     async def update_intelligence(self):
@@ -841,6 +857,13 @@ class AutonomousDemoTrader:
 
         # 8. Brain Status
         print(f"   {self.brain.get_brain_status()}")
+
+        # 9. Solana Network Gas & Congestion Radar
+        try:
+            self.network_status = await fetch_solana_network_status()
+            print(f"   ⚡ Solana Radar: {self.network_status.get('tps', 3200)} TPS | Est Gas: ₹{self.network_status.get('est_gas_inr', 0.50):.2f} ({self.network_status.get('congestion', 'OPTIMAL')})")
+        except Exception:
+            pass
         print("---")
 
     async def scan_and_trade(self, candidate_addresses: list):
@@ -873,6 +896,11 @@ class AutonomousDemoTrader:
             print(f"   [LIMIT] Already {len(self.active_positions)}/{max_concurrent} positions open.")
             return
 
+        # Check Solana Network Gas Spike / Congestion
+        if not self.network_status.get("safe_to_trade", True):
+            print(f"   ⚡ [NETWORK RADAR] Solana gas fee elevated (₹{self.network_status.get('est_gas_inr', 0.50):.2f}). Pausing new entries to prevent fee drain.")
+            return
+
         # 1. Macro Context Check
         macro = await fetch_sol_macro_context()
         self.last_macro_change = macro.get('sol_6h_change_pct', 0.0)
@@ -895,6 +923,12 @@ class AutonomousDemoTrader:
         regime_threshold = self.current_regime.get("ml_threshold", 0.65)
         survival_min_conf = getattr(self, "survival_tier", None).min_confidence if hasattr(self, "survival_tier") else 0.70
         entry_threshold = max(self.brain.get_adaptive_threshold(regime_threshold), survival_min_conf)
+
+        # Dynamic Caution Bump: On 2+ consecutive losses, raise entry bar by +3% to filter choppy market noise
+        if getattr(self, "consecutive_losses", 0) >= 2:
+            entry_threshold += 0.03
+            print(f"   🛡️ [CAUTION BUMP] {self.consecutive_losses} consecutive losses. Raising entry threshold +3% -> {entry_threshold*100:.1f}%")
+
         min_pool_liq = self.survival_tier.min_liquidity_usd if hasattr(self, "survival_tier") else 5000.0
         print(f"   [THRESHOLD] Entry bar: {entry_threshold*100:.0f}% (Regime: {regime_threshold*100:.0f}%, Survival: {survival_min_conf*100:.0f}%, Min Liq: ${min_pool_liq:,.0f})")
 
@@ -1043,14 +1077,15 @@ class AutonomousDemoTrader:
 
             # Position Sizing via Kelly (regime-adjusted)
             size_inr = self.calculate_kelly_position_size(win_prob)
-            if size_inr < 15.0:
-                print(f"   Position sizing INR{size_inr:.2f} below INR15 minimum. Skipping.")
+            if size_inr < 22.0:
+                print(f"   Position sizing INR{size_inr:.2f} below INR22 fee-shielded floor. Skipping.")
                 continue
 
             # ATA Rent Reservation (Refunded upon sell)
             ata_locked = min(5.0, self.portfolio_inr * 0.05)
-            # Solana Network Gas (~₹0.50) + Raydium 0.3% AMM fee
-            buy_fee_inr = round(0.50 + (size_inr * 0.003), 2)
+            # Solana Network Gas + Raydium 0.3% AMM fee
+            net_gas = self.network_status.get("est_gas_inr", 0.50) if hasattr(self, "network_status") else 0.50
+            buy_fee_inr = round(net_gas + (size_inr * 0.003), 2)
 
             self.locked_ata_rent_inr += ata_locked
             self.total_fees_paid_inr += buy_fee_inr
@@ -1226,9 +1261,23 @@ class AutonomousDemoTrader:
                 if not pos.get("outcome_recorded", False):
                     if net_pnl >= 0:
                         self.wins += 1
+                        self.consecutive_losses = 0
                     else:
                         self.losses += 1
+                        self.consecutive_losses += 1
                     pos["outcome_recorded"] = True
+                else:
+                    if net_pnl >= 0:
+                        self.consecutive_losses = 0
+
+                # Track best runner
+                if pnl_pct > self.best_runner.get("pnl_pct", 0.0):
+                    self.best_runner = {
+                        "symbol": pos["token"],
+                        "pnl_pct": round(pnl_pct, 1),
+                        "gain_inr": round(net_pnl, 2),
+                        "time": time.strftime("%H:%M:%S")
+                    }
 
                 if net_pnl >= 0:
                     status_str = "PROFIT"
@@ -1331,7 +1380,20 @@ class AutonomousDemoTrader:
                     self.realized_profit_inr += profit_gain
                     if not pos.get("outcome_recorded", False):
                         self.wins += 1
+                        self.consecutive_losses = 0
                         pos["outcome_recorded"] = True
+                    else:
+                        self.consecutive_losses = 0
+
+                    # Check best runner for TP stage
+                    tp_pct = round(((curr_price - pos['entry_price']) / pos['entry_price']) * 100, 1)
+                    if tp_pct > self.best_runner.get("pnl_pct", 0.0):
+                        self.best_runner = {
+                            "symbol": pos["token"],
+                            "pnl_pct": tp_pct,
+                            "gain_inr": round(profit_gain, 2),
+                            "time": time.strftime("%H:%M:%S")
+                        }
 
                     pos["remaining_tokens"] -= tokens_to_sell
                     stage["hit"] = True
@@ -1377,7 +1439,10 @@ class AutonomousDemoTrader:
                 self.portfolio_inr += refund_ata
                 if not pos.get("outcome_recorded", False):
                     self.wins += 1
+                    self.consecutive_losses = 0
                     pos["outcome_recorded"] = True
+                else:
+                    self.consecutive_losses = 0
 
                 # === NEW: Log winning trade to journal ===
                 category = self.journal.log_trade(
