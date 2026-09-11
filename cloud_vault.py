@@ -38,16 +38,17 @@ def load_cloud_state_sync() -> Dict[str, Any]:
     Returns dictionary of state or empty dict if unreachable.
     """
     global _CACHED_CLOUD_STATE
-    try:
-        with httpx.Client(timeout=6.0) as client:
-            res = client.get(VAULT_URL)
-            if res.status_code == 200:
-                data = res.json().get("data", {})
-                _CACHED_CLOUD_STATE.update(data)
-                print(f"☁️ [CLOUD VAULT] Restored persistent cloud state (Dodged: {data.get('dodged_crashes', 0)}).")
-                return data
-    except Exception as e:
-        print(f"☁️ [CLOUD VAULT] Offline or startup timeout: {e}")
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=25.0) as client:
+                res = client.get(VAULT_URL)
+                if res.status_code == 200:
+                    data = res.json().get("data", {})
+                    _CACHED_CLOUD_STATE.update(data)
+                    print(f"☁️ [CLOUD VAULT] Restored persistent cloud state (Dodged: {data.get('dodged_crashes', 0)}).")
+                    return data
+        except Exception as e:
+            print(f"☁️ [CLOUD VAULT] Attempt {attempt+1} notice: {e}")
     return _CACHED_CLOUD_STATE
 
 
@@ -57,7 +58,7 @@ async def load_cloud_state_async() -> Dict[str, Any]:
     """
     global _CACHED_CLOUD_STATE
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
+        async with httpx.AsyncClient(timeout=25.0) as client:
             res = await client.get(VAULT_URL)
             if res.status_code == 200:
                 data = res.json().get("data", {})
@@ -87,7 +88,7 @@ async def save_cloud_state_async(data_payload: Dict[str, Any], debounce_secs: in
             "name": "cryptogen_state",
             "data": _CACHED_CLOUD_STATE
         }
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             res = await client.put(VAULT_URL, json=payload)
             if res.status_code == 200:
                 pass
