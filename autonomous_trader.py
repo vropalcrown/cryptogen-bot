@@ -438,6 +438,8 @@ class AutonomousDemoTrader:
                 "sol_to_inr": round(getattr(self, "sol_to_inr", 13000.0), 2),
                 "shadow_stats": self.shadow_tracker.get_summary_stats() if hasattr(self, "shadow_tracker") else {},
                 "autotune_params": self.autotuner.active_params if hasattr(self, "autotuner") else {},
+                "autotune_history": getattr(self.autotuner, "tuning_history", [])[-20:] if hasattr(self, "autotuner") else [],
+                "autotune_cycles": getattr(self.autotuner, "total_tune_cycles", 0) if hasattr(self, "autotuner") else 0,
                 "network_status": getattr(self, "network_status", {
                     "tps": 3250, "user_tps": 1200, "est_gas_inr": 0.50, "congestion": "OPTIMAL", "safe_to_trade": True
                 }),
