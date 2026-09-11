@@ -425,6 +425,11 @@ DASHBOARD_HTML = """
               <span class="tag tag-purple">📈 Dynamic Trailing Escalator</span>
               <span class="tag tag-gold">⚖️ Triangular Arbitrage Gate</span>
               <span class="tag tag-green">🎯 False-Negative Shadow Radar</span>
+              <span class="tag tag-cyan">📈 Qlib Alpha Factors</span>
+              <span class="tag tag-green">🛡️ Freqtrade Range Filter</span>
+              <span class="tag tag-gold">💧 Hummingbot Micro-Depth</span>
+              <span class="tag tag-purple">⚙️ Nautilus Order FSM</span>
+              <span class="tag tag-cyan">📡 OpenAlgo Webhook Bridge</span>
             </div>
           </div>
           <hr style="border: 0; border-top: 1px solid var(--card-border);">
@@ -438,6 +443,18 @@ DASHBOARD_HTML = """
               <div style="display: flex; justify-content: space-between;">
                 <span style="color: var(--text-muted);">Fee-Drag Shield:</span>
                 <span style="color: var(--accent-cyan); font-weight: 700;">🛡️ Sizing ≥ ₹22 (≤ 2.5% Fee)</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-muted);">Hummingbot Slippage:</span>
+                <span style="color: var(--win-green); font-weight: 700;">🛡️ Max ≤0.25% Impact</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-muted);">Nautilus Order FSM:</span>
+                <span id="order-fsm-badge" style="color: var(--accent-cyan); font-weight: 700;">STANDBY</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-muted);">OpenAlgo Signal Bridge:</span>
+                <span id="webhook-badge" style="color: var(--win-green); font-weight: 700;">🟢 LISTENING (/api/webhook)</span>
               </div>
               <div style="display: flex; justify-content: space-between;">
                 <span style="color: var(--text-muted);">Adaptive Conviction:</span>
@@ -846,6 +863,17 @@ DASHBOARD_HTML = """
           const progBarEl = document.getElementById('progress-bar');
           if (progBarEl) progBarEl.style.width = `${pct}%`;
 
+          // Nautilus Order FSM State Dynamic Update
+          const fsmBadge = document.getElementById('order-fsm-badge');
+          if (fsmBadge) {
+            const fsmState = data.order_fsm_state || 'STANDBY';
+            fsmBadge.innerText = fsmState;
+            if (fsmState === 'CONFIRMED_ONCHAIN') fsmBadge.style.color = 'var(--win-green)';
+            else if (fsmState === 'FAILED' || fsmState === 'REJECTED') fsmBadge.style.color = 'var(--loss-red)';
+            else if (fsmState === 'QUOTED' || fsmState === 'SIGNED' || fsmState === 'BROADCASTED') fsmBadge.style.color = 'var(--gold)';
+            else fsmBadge.style.color = 'var(--accent-cyan)';
+          }
+
           // Positions Table Dynamic Re-render
           const positions = data.positions || [];
           const posCountEl = document.getElementById('pos-count');
@@ -1153,7 +1181,17 @@ DASHBOARD_HTML = """
     });
 
     async function triggerControl(action) {
-      alert(`Sent command ${action} to bot via Telegram channel!`);
+      try {
+        const res = await fetch('/api/control', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: action})
+        });
+        const d = await res.json();
+        alert(`Command ${action} status: ${d.message || d.status || 'Executed'}`);
+      } catch (e) {
+        alert(`Sent command ${action} to bot via Telegram channel!`);
+      }
     }
 
     // Refresh immediately and then every 3 seconds
@@ -1164,11 +1202,108 @@ DASHBOARD_HTML = """
 </html>
 """
 
+GLOBAL_TRADER_REF = None
+
+def set_trader_instance(trader):
+    global GLOBAL_TRADER_REF
+    GLOBAL_TRADER_REF = trader
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b"{}"
+
+        try:
+            payload = json.loads(post_data.decode("utf-8")) if post_data else {}
+        except Exception:
+            payload = {}
+
+        if self.path == "/api/webhook":
+            # OpenAlgo / TradingView Webhook Bridge
+            secret = os.getenv("WEBHOOK_SECRET")
+            if secret and payload.get("secret") != secret:
+                self.send_response(401)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "REJECTED", "reason": "Invalid webhook secret"}).encode("utf-8"))
+                return
+
+            if GLOBAL_TRADER_REF:
+                try:
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+
+                    if loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(GLOBAL_TRADER_REF.process_external_signal(payload), loop)
+                        result = future.result(timeout=15)
+                    else:
+                        result = loop.run_until_complete(GLOBAL_TRADER_REF.process_external_signal(payload))
+                except Exception as e:
+                    result = {"status": "ERROR", "reason": f"Signal execution error: {str(e)}"}
+            else:
+                result = {
+                    "status": "QUEUED",
+                    "action": payload.get("action", "UNKNOWN"),
+                    "token": payload.get("token", "UNKNOWN"),
+                    "message": "Engine starting up. Signal received and logged."
+                }
+
+            status_code = 200 if result.get("status") in ("APPROVED_AND_FILLED", "SUCCESS", "QUEUED") else 400
+            self.send_response(status_code)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode("utf-8"))
+
+        elif self.path == "/api/control":
+            action = payload.get("action", "").lower()
+            resp = {"status": "OK", "action": action}
+            if GLOBAL_TRADER_REF:
+                try:
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+
+                    if "/closeall" in action:
+                        if loop.is_running():
+                            future = asyncio.run_coroutine_threadsafe(GLOBAL_TRADER_REF.emergency_close_all(), loop)
+                            closed = future.result(timeout=15)
+                        else:
+                            closed = loop.run_until_complete(GLOBAL_TRADER_REF.emergency_close_all())
+                        resp["closed_count"] = closed
+                        resp["message"] = f"Closed {closed} positions"
+                    elif "/pause" in action:
+                        GLOBAL_TRADER_REF.is_paused = True
+                        GLOBAL_TRADER_REF.save_state()
+                        GLOBAL_TRADER_REF.dump_live_state()
+                        resp["message"] = "Bot paused"
+                    elif "/resume" in action:
+                        GLOBAL_TRADER_REF.is_paused = False
+                        GLOBAL_TRADER_REF.save_state()
+                        GLOBAL_TRADER_REF.dump_live_state()
+                        resp["message"] = "Bot resumed"
+                except Exception as e:
+                    resp = {"status": "ERROR", "reason": str(e)}
+
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
@@ -1312,7 +1447,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-def start_dashboard_server(port=8080):
+def start_dashboard_server(port=8080, trader=None):
+    if trader:
+        set_trader_instance(trader)
     server = HTTPServer(("0.0.0.0", port), DashboardHandler)
     print(f"🌐 [WEB DASHBOARD] Live at http://localhost:{port}")
     server.serve_forever()

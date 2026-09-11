@@ -209,3 +209,35 @@ def calculate_vwap_deviation(curr_price: float, price_history: list, volume_hist
         "safe_to_buy": safe
     }
 
+def validate_micro_depth_slippage(trade_amount: float, pool_liquidity: float, sol_to_inr: float = 13000.0, max_slippage_pct: float = 0.25) -> dict:
+    """
+    Hummingbot-inspired Micro-Depth & Anti-Slippage Guard:
+    Guarantees that on our ₹100 seed capital, trade size does not induce > 0.25% AMM price impact.
+    Handles inputs whether provided in SOL directly, or INR trade size + USD pool liquidity.
+    """
+    if pool_liquidity <= 0:
+        return {"safe": False, "price_impact": 1.0, "impact_pct": 100.0, "estimated_slippage_pct": 100.0, "reason": "Empty pool liquidity"}
+
+    # If trade_amount > 1.0, it's denominated in INR (e.g. ₹22.00 to ₹30.00)
+    # Convert INR to SOL, and USD pool liquidity to SOL (~$140/SOL)
+    if trade_amount > 1.0:
+        trade_sol = trade_amount / max(1.0, sol_to_inr)
+        sol_usd_est = sol_to_inr / 90.0  # Approx USD per SOL (~$145)
+        pool_sol = pool_liquidity / max(1.0, sol_usd_est)
+    else:
+        trade_sol = trade_amount
+        pool_sol = pool_liquidity
+
+    impact = trade_sol / (pool_sol + trade_sol)
+    impact_pct = impact * 100.0
+    is_safe = impact_pct <= max_slippage_pct
+
+    return {
+        "safe": is_safe,
+        "price_impact": round(float(impact), 6),
+        "impact_pct": round(float(impact_pct), 3),
+        "estimated_slippage_pct": round(float(impact_pct), 3),
+        "reason": f"Optimal micro-slippage ({impact_pct:.3f}%)" if is_safe else f"Price impact {impact_pct:.2f}% exceeds {max_slippage_pct:.2f}% limit"
+    }
+
+

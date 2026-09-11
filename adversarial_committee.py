@@ -14,7 +14,7 @@ class BullAnalyst:
 
     def evaluate(self, candidate: dict) -> dict:
         features = candidate.get("features", {})
-        win_prob = candidate.get("win_prob", 0.50)
+        win_prob = candidate.get("win_prob", candidate.get("win_probability", 0.50))
         meta_bonus = candidate.get("meta_bonus", 0.0)
         whale_bonus = candidate.get("whale_bonus", 0.0)
 
@@ -47,6 +47,17 @@ class BullAnalyst:
             score += 8.0
             points.append("Trending Narrative Meta Alignment")
 
+        # Qlib Formulaic Alpha Factors
+        pv_corr = features.get("alpha_pv_corr", 0.0)
+        if pv_corr > 0.5:
+            score += 8.0
+            points.append("Qlib Alpha: Positive Price-Volume Expansion")
+
+        mom_accel = features.get("alpha_momentum_accel", 0.0)
+        if mom_accel > 2.5:
+            score += 7.0
+            points.append(f"Qlib Alpha: Momentum Acceleration (+{mom_accel:.1f}%)")
+
         thesis = " • ".join(points) if points else "Standard momentum profile"
         return {
             "score": round(min(100.0, score), 1),
@@ -61,6 +72,7 @@ class BearAnalyst:
     def evaluate(self, candidate: dict, live_data: dict, gas_inr: float, consecutive_losses: int) -> dict:
         score = 15.0  # Base risk floor
         red_flags = []
+        features = candidate.get("features", {})
 
         # 1. Holder Concentration (HHI)
         hhi_data = live_data.get("holder_concentration", {})
@@ -81,6 +93,17 @@ class BearAnalyst:
         elif wash.get("vol_to_liq_ratio", 0) > 10.0:
             score += 15.0
             red_flags.append("Abnormal Volume-to-Liquidity Churn")
+
+        # 2.5 Qlib Bearish Alpha Signals
+        pv_corr = features.get("alpha_pv_corr", 0.0)
+        if pv_corr < -0.5:
+            score += 25.0
+            red_flags.append("Qlib Alpha: Negative PV Divergence (Distribution Churn)")
+
+        vol_skew = features.get("alpha_vol_skew", 0.0)
+        if vol_skew < -0.5:
+            score += 20.0
+            red_flags.append("Qlib Alpha: Severe Downside Volatility Skew")
 
         # 3. Micro Liquidity Slippage
         liq = candidate.get("liq", 0)
@@ -115,7 +138,7 @@ class ChiefRiskOfficer:
     def adjudicate(self, candidate: dict, bull: dict, bear: dict, consecutive_losses: int, gas_inr: float) -> dict:
         symbol = candidate.get("symbol", "UNKNOWN")
         addr = candidate.get("addr", "")
-        win_prob = candidate.get("win_prob", 0.50)
+        win_prob = candidate.get("win_prob", candidate.get("win_probability", 0.50))
 
         veto = False
         veto_reason = None

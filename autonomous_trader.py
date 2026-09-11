@@ -20,7 +20,7 @@ from quant_math import (
     ATA_RENT_EXEMPTION_SOL, BASE_TX_FEE_SOL, AVERAGE_PRIORITY_FEE_SOL,
     calculate_amm_price_impact, calculate_fractional_kelly_size,
     calculate_holder_concentration_hhi, calculate_hurst_exponent,
-    calculate_vwap_deviation
+    calculate_vwap_deviation, validate_micro_depth_slippage
 )
 from safety import analyze_token_safety
 from data_collector import fetch_dex_token_data, fetch_trending_solana_tokens, fetch_sol_macro_context, fetch_solana_network_status
@@ -508,7 +508,9 @@ class AutonomousDemoTrader:
                 "consecutive_losses": getattr(self, "consecutive_losses", 0),
                 "latest_debate": getattr(self.committee, "latest_debate", {}),
                 "agent_heartbeats": {k: round(time.time() - v, 1) for k, v in getattr(self, "agent_heartbeats", {}).items()},
-                "is_live": getattr(self, "is_live", False)
+                "is_live": getattr(self, "is_live", False),
+                "order_fsm_state": getattr(self.executor, "last_order_state", "STANDBY"),
+                "order_audit_trail": getattr(self.executor, "state_history", [])[-5:]
             }
 
             state_file = os.path.join(os.path.dirname(__file__), "live_state.json")
@@ -620,6 +622,202 @@ class AutonomousDemoTrader:
                 f"💾 Winning brain frozen to golden checkpoint."
             )
 
+    async def emergency_close_all(self) -> int:
+        """Sells all active positions, converts to cash/SOL, and reclaims rent."""
+        print("   🚨 [EMERGENCY CLOSE ALL] Selling all active positions...")
+        closed_count = len(self.active_positions)
+        for addr, pos in list(self.active_positions.items()):
+            await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
+            self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
+            curr_p = pos.get("curr_price", pos["entry_price"])
+            rem_ratio = pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0))
+            price_ratio = curr_p / max(1e-12, pos["entry_price"])
+            gross_rec = pos["invested_inr"] * rem_ratio * price_ratio
+            sell_fee = round(0.50 + (gross_rec * 0.003), 2)
+            self.total_fees_paid_inr += sell_fee
+            net_rec = max(0.0, gross_rec - sell_fee)
+            refund_ata = pos.get("ata_locked_inr", 0.0)
+            self.locked_ata_rent_inr = max(0.0, self.locked_ata_rent_inr - refund_ata)
+            self.portfolio_inr += (net_rec + refund_ata)
+
+            gain_loss = net_rec - (pos["invested_inr"] * rem_ratio)
+            self.realized_profit_inr += gain_loss
+            if gain_loss >= 0:
+                self.wins += 1
+            else:
+                self.losses += 1
+
+            tx_entry = {
+                "id": f"tx_{int(time.time()*1000)}",
+                "time": time.strftime("%H:%M:%S"),
+                "timestamp": time.time(),
+                "token": pos["token"],
+                "address": addr,
+                "action": "EMERGENCY CLOSE",
+                "price": curr_p,
+                "size_inr": round(pos["invested_inr"] * rem_ratio, 2),
+                "gain_loss_inr": round(gain_loss, 2),
+                "fee_inr": round(sell_fee, 2),
+                "money_left": round(self.portfolio_inr, 2),
+                "status": "PROFIT" if gain_loss >= 0 else "LOSS"
+            }
+            if not hasattr(self, "trade_history"):
+                self.trade_history = []
+            self.trade_history.insert(0, tx_entry)
+            if len(self.trade_history) > 100:
+                self.trade_history.pop()
+
+        self.active_positions.clear()
+        self.locked_ata_rent_inr = 0.0
+        self.save_state()
+        self.dump_live_state()
+        await send_telegram_alert(f"🚨 *[EMERGENCY CLOSE ALL]* Closed {closed_count} position(s). All capital converted to cash/SOL + ATA rent reclaimed! Cash: INR {self.portfolio_inr:.2f}")
+        return closed_count
+
+    async def process_external_signal(self, payload: dict) -> dict:
+        """
+        OpenAlgo / TradingView Webhook Bridge Processor:
+        Accepts signal payload:
+          { "action": "BUY" | "CLOSE_ALL" | "PAUSE" | "RESUME", "token": "<address_or_symbol>", "secret": "..." }
+        Strictly enforces micro-capital survival rules (₹100 seed):
+          1. Minimum trade size ≥ ₹22 (fee drag ≤ 2.5%), max ₹30
+          2. Emergency reserve buffer (₹50) protected at all times
+          3. RugCheck & Honeypot safety filters
+          4. Freqtrade Range Chop Filter
+          5. Hummingbot Micro-Depth Slippage (≤ 0.25% impact)
+          6. Tauric Chief Risk Officer (CRO) VETO authority
+        """
+        action = payload.get("action", "").upper()
+        if action == "CLOSE_ALL":
+            closed_cnt = await self.emergency_close_all()
+            return {"status": "SUCCESS", "action": "CLOSE_ALL", "closed_positions": closed_cnt, "cash_inr": round(self.portfolio_inr, 2)}
+        elif action == "PAUSE":
+            self.is_paused = True
+            self.save_state()
+            self.dump_live_state()
+            return {"status": "SUCCESS", "action": "PAUSE", "is_paused": True}
+        elif action == "RESUME":
+            self.is_paused = False
+            self.save_state()
+            self.dump_live_state()
+            return {"status": "SUCCESS", "action": "RESUME", "is_paused": False}
+        elif action == "BUY":
+            token_query = payload.get("token") or payload.get("address")
+            if not token_query:
+                return {"status": "REJECTED", "reason": "Missing token address or symbol"}
+            if self.is_danger_halted:
+                return {"status": "REJECTED", "reason": "Trading halted: Danger floor breached"}
+            if self.is_paused:
+                return {"status": "REJECTED", "reason": "Bot is currently paused"}
+
+            # Micro-capital reserve check
+            if self.portfolio_inr < 22.0 or (self.portfolio_inr - 22.0 < EMERGENCY_RESERVE_INR):
+                return {
+                    "status": "REJECTED",
+                    "reason": f"Insufficient micro-capital: Cash ₹{self.portfolio_inr:.2f} below reserve buffer ₹{EMERGENCY_RESERVE_INR:.2f} + min size ₹22"
+                }
+
+            live_data = await fetch_dex_token_data(token_query)
+            if not live_data or live_data.get("price_usd", 0) <= 0:
+                return {"status": "REJECTED", "reason": f"Unable to fetch live DEX market data for {token_query}"}
+
+            addr = live_data.get("address", token_query)
+            symbol = live_data.get("symbol", "TOKEN")
+            price = live_data["price_usd"]
+            liq = live_data.get("liquidity_usd", 0)
+
+            # Safety filter
+            safety = await analyze_token_safety(addr, live_data)
+            if not safety.get("safe", False):
+                return {"status": "REJECTED", "reason": f"Safety Filter Veto: {safety.get('reason')}"}
+
+            # Freqtrade range chop filter
+            from safety import check_range_stability
+            range_check = check_range_stability(live_data)
+            if not range_check.get("stable", True):
+                return {"status": "REJECTED", "reason": f"Freqtrade Chop Filter Veto: {range_check.get('reason')}"}
+
+            # Hummingbot micro-depth slippage
+            est_size = max(22.0, min(30.0, self.portfolio_inr * 0.25))
+            slip_guard = validate_micro_depth_slippage(est_size, liq, self.sol_to_inr, max_slippage_pct=0.25)
+            if not slip_guard.get("safe", True):
+                return {"status": "REJECTED", "reason": f"Hummingbot Slippage Veto: {slip_guard.get('reason')}"}
+
+            # ML Predict
+            feats = extract_features_from_token_data(live_data)
+            win_prob = self.brain.predict_win_probability(feats)
+
+            # Adversarial Committee Evaluation (Tauric CRO VETO)
+            candidate_dict = {
+                "symbol": symbol,
+                "address": addr,
+                "win_probability": win_prob,
+                "safety": safety,
+                "features": feats,
+                "regime": self.current_regime.get("regime", "CRAB"),
+                "macro_trend": getattr(self, "last_macro_trend", "NEUTRAL")
+            }
+            net_gas = self.network_status.get("est_gas_inr", 0.50) if hasattr(self, "network_status") else 0.50
+            committee_verdict = self.committee.conduct_debate(
+                candidate=candidate_dict,
+                live_data=live_data,
+                gas_inr=net_gas,
+                consecutive_losses=getattr(self, "consecutive_losses", 0)
+            )
+
+            if committee_verdict.get("verdict") == "VETOED":
+                return {
+                    "status": "REJECTED",
+                    "reason": f"Chief Risk Officer VETO: {committee_verdict.get('veto_reason')}",
+                    "committee_verdict": committee_verdict
+                }
+
+            # Safe to enter trade
+            pos_size_inr = round(est_size * committee_verdict.get("sizing_multiplier", 1.0), 2)
+            pos_size_inr = max(22.0, min(30.0, pos_size_inr))
+
+            # Trigger swap execution
+            swap_res = await self.executor.execute_swap(
+                SOL_MINT, addr, int((pos_size_inr / self.sol_to_inr) * 1_000_000_000),
+                paper_mode=(not self.is_live)
+            )
+
+            if swap_res.get("success"):
+                tokens_bought = (pos_size_inr / self.sol_to_inr) / max(1e-12, (price / (self.sol_to_inr / 140.0)))
+                self.portfolio_inr -= pos_size_inr
+                self.active_positions[addr] = {
+                    "token": symbol,
+                    "address": addr,
+                    "entry_price": price,
+                    "curr_price": price,
+                    "invested_inr": pos_size_inr,
+                    "initial_tokens": tokens_bought,
+                    "remaining_tokens": tokens_bought,
+                    "stop_loss_price": price * 0.90,
+                    "peak_price": price,
+                    "entry_time": time.time(),
+                    "source": "OPENALGO_WEBHOOK"
+                }
+                self.save_state()
+                self.dump_live_state()
+                self.log_activity("📡", f"Webhook Signal Filled: {symbol} (₹{pos_size_inr})")
+                return {
+                    "status": "APPROVED_AND_FILLED",
+                    "token": symbol,
+                    "address": addr,
+                    "size_inr": pos_size_inr,
+                    "fsm_state": getattr(self.executor, "last_order_state", "CONFIRMED_ONCHAIN"),
+                    "cro_verdict": committee_verdict.get("verdict")
+                }
+            else:
+                return {
+                    "status": "EXECUTION_FAILED",
+                    "reason": swap_res.get("error", "DEX execution failed"),
+                    "fsm_state": getattr(self.executor, "last_order_state", "FAILED")
+                }
+
+        return {"status": "REJECTED", "reason": f"Unknown action: {action}"}
+
     async def handle_remote_commands(self):
         """
         Polls Telegram for user remote commands and executes them instantly.
@@ -697,54 +895,7 @@ class AutonomousDemoTrader:
                 await send_telegram_alert("▶️ *[BOT RESUMED]* Autonomous market scans and buying resumed!")
 
             elif cmd == "/closeall":
-                print("   🚨 [EMERGENCY CLOSE ALL] Selling all active positions...")
-                closed_count = len(self.active_positions)
-                for addr, pos in list(self.active_positions.items()):
-                    await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
-                    self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
-                    curr_p = pos.get("curr_price", pos["entry_price"])
-                    rem_ratio = pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0))
-                    price_ratio = curr_p / max(1e-12, pos["entry_price"])
-                    gross_rec = pos["invested_inr"] * rem_ratio * price_ratio
-                    sell_fee = round(0.50 + (gross_rec * 0.003), 2)
-                    self.total_fees_paid_inr += sell_fee
-                    net_rec = max(0.0, gross_rec - sell_fee)
-                    refund_ata = pos.get("ata_locked_inr", 0.0)
-                    self.locked_ata_rent_inr = max(0.0, self.locked_ata_rent_inr - refund_ata)
-                    self.portfolio_inr += (net_rec + refund_ata)
-
-                    gain_loss = net_rec - (pos["invested_inr"] * rem_ratio)
-                    self.realized_profit_inr += gain_loss
-                    if gain_loss >= 0:
-                        self.wins += 1
-                    else:
-                        self.losses += 1
-
-                    tx_entry = {
-                        "id": f"tx_{int(time.time()*1000)}",
-                        "time": time.strftime("%H:%M:%S"),
-                        "timestamp": time.time(),
-                        "token": pos["token"],
-                        "address": addr,
-                        "action": "EMERGENCY CLOSE",
-                        "price": curr_p,
-                        "size_inr": round(pos["invested_inr"] * rem_ratio, 2),
-                        "gain_loss_inr": round(gain_loss, 2),
-                        "fee_inr": round(sell_fee, 2),
-                        "money_left": round(self.portfolio_inr, 2),
-                        "status": "PROFIT" if gain_loss >= 0 else "LOSS"
-                    }
-                    if not hasattr(self, "trade_history"):
-                        self.trade_history = []
-                    self.trade_history.insert(0, tx_entry)
-                    if len(self.trade_history) > 100:
-                        self.trade_history.pop()
-
-                self.active_positions.clear()
-                self.locked_ata_rent_inr = 0.0
-                self.save_state()
-                self.dump_live_state()
-                await send_telegram_alert(f"🚨 *[EMERGENCY CLOSE ALL]* Closed {closed_count} position(s). All capital converted to cash/SOL + ATA rent reclaimed! Cash: INR {self.portfolio_inr:.2f}")
+                await self.emergency_close_all()
 
             elif cmd == "/harvest":
                 await self.check_milestone_harvest()
@@ -1010,12 +1161,11 @@ class AutonomousDemoTrader:
                         self.log_activity("🚫", f"Filtered {symbol}: Wash trading (Score {wash['wash_score']})")
                         return None
 
-                    # Filter 3: AMM Price Impact
-                    trade_sol = 20.0 / self.sol_to_inr
-                    pool_sol = liq / 140.0
-                    price_impact = calculate_amm_price_impact(trade_sol, pool_sol)
-                    if price_impact > 0.03:
-                        self.log_activity("📉", f"Filtered {symbol}: Price impact {price_impact*100:.1f}% too high")
+                    # Filter 3: Hummingbot Micro-Depth & Slippage Guard (Max 0.25% Price Impact)
+                    est_trade_inr = max(22.0, min(30.0, self.portfolio_inr * 0.25))
+                    slip_guard = validate_micro_depth_slippage(est_trade_inr, liq, self.sol_to_inr, max_slippage_pct=0.25)
+                    if not slip_guard.get("safe", True):
+                        self.log_activity("📉", f"Filtered {symbol}: Slippage {slip_guard.get('estimated_slippage_pct', 0.0):.2f}% > 0.25% limit ({slip_guard.get('reason')})")
                         return None
 
                     # Filter 3.5: OpenBB Quantitative Math (Hurst Exponent & VWAP Deviation)
@@ -1632,7 +1782,8 @@ async def run_autonomous_simulation_loop():
 
     # Start Web Analytics Dashboard in background thread
     import threading
-    from dashboard_server import start_dashboard_server
+    from dashboard_server import start_dashboard_server, set_trader_instance
+    set_trader_instance(trader)
     dashboard_port = int(os.getenv("PORT", 8080))
     dash_thread = threading.Thread(target=start_dashboard_server, args=(dashboard_port,), daemon=True)
     dash_thread.start()
