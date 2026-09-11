@@ -445,6 +445,69 @@ DASHBOARD_HTML = """
               </div>
             </div>
           </div>
+          <hr style="border: 0; border-top: 1px solid var(--card-border);">
+          <div>
+            <div class="card-title">🏛️ Tauric Adversarial Debate Committee</div>
+            <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 10px; padding: 12px; margin-top: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span style="font-weight: 700; font-size: 13px;" id="debate-token">Token: Awaiting Scan</span>
+                <span class="tag tag-purple" id="debate-verdict">STANDBY</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-family: 'JetBrains Mono', monospace;">
+                <div style="display: flex; justify-content: space-between;">
+                  <span style="color: var(--win-green); font-weight: 600;">🐂 Bull Score:</span>
+                  <span id="debate-bull-score" style="color: var(--win-green); font-weight: 700;">0/100</span>
+                </div>
+                <div id="debate-bull-case" style="color: #9CA3AF; font-size: 10.5px; padding-left: 8px; border-left: 2px solid var(--win-green);">
+                  Awaiting candidate evaluation
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+                  <span style="color: var(--loss-red); font-weight: 600;">🐻 Bear Score:</span>
+                  <span id="debate-bear-score" style="color: var(--loss-red); font-weight: 700;">0/100</span>
+                </div>
+                <div id="debate-bear-case" style="color: #9CA3AF; font-size: 10.5px; padding-left: 8px; border-left: 2px solid var(--loss-red);">
+                  Awaiting candidate evaluation
+                </div>
+                <div style="margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between;">
+                  <span style="color: var(--gold); font-weight: 600;">🛡️ Risk Officer:</span>
+                  <span id="debate-cro-decision" style="color: var(--text-main); font-weight: 700;">VETO POWER ACTIVE</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <hr style="border: 0; border-top: 1px solid var(--card-border);">
+          <div>
+            <div class="card-title">📎 Paperclip Sub-Agent Heartbeats</div>
+            <div id="agent-heartbeat-matrix" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; font-size: 10.5px; font-family: 'JetBrains Mono', monospace;">
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>Scout</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>Safety</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>Brain</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>Regime</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>News</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>Whale</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>Shadow</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span>AutoTuner</span> <span style="color: var(--win-green);">● Active</span>
+              </div>
+              <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between; grid-column: span 2;">
+                <span>Risk Committee</span> <span style="color: var(--accent-cyan);">● Veto Gate</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div> <!-- Close .dashboard-body grid properly -->
@@ -714,6 +777,68 @@ DASHBOARD_HTML = """
               cbEl.innerText = `STABLE (${cLosses} Loss Streak)`;
               cbEl.style.color = 'var(--win-green)';
             }
+          }
+
+          // Tauric Adversarial Debate Committee Telemetry
+          const debate = data.latest_debate || {};
+          const debTokenEl = document.getElementById('debate-token');
+          const debVerdictEl = document.getElementById('debate-verdict');
+          const debBullScoreEl = document.getElementById('debate-bull-score');
+          const debBullCaseEl = document.getElementById('debate-bull-case');
+          const debBearScoreEl = document.getElementById('debate-bear-score');
+          const debBearCaseEl = document.getElementById('debate-bear-case');
+          const debCroEl = document.getElementById('debate-cro-decision');
+
+          if (debTokenEl) debTokenEl.innerText = debate.token && debate.token !== 'None' ? `Token: ${debate.token} (${debate.time || ''})` : 'Token: Awaiting Scan';
+          if (debVerdictEl) {
+            const v = debate.verdict || 'STANDBY';
+            debVerdictEl.innerText = v;
+            debVerdictEl.className = `tag ${v === 'APPROVED' ? 'tag-green' : (v === 'VETOED' ? 'tag-red' : 'tag-purple')}`;
+          }
+          if (debBullScoreEl) debBullScoreEl.innerText = `${debate.bull_score || 0}/100`;
+          if (debBullCaseEl) debBullCaseEl.innerText = debate.bull_thesis || 'Awaiting candidate evaluation';
+          if (debBearScoreEl) debBearScoreEl.innerText = `${debate.bear_score || 0}/100`;
+          if (debBearCaseEl) debBearCaseEl.innerText = debate.bear_thesis || 'Awaiting candidate evaluation';
+          if (debCroEl) {
+            if (debate.verdict === 'APPROVED') {
+              debCroEl.innerText = `APPROVED (Size: ${debate.sizing_mult || 1.0}x)`;
+              debCroEl.style.color = 'var(--win-green)';
+            } else if (debate.verdict === 'VETOED') {
+              debCroEl.innerText = `VETOED: ${debate.veto_reason ? debate.veto_reason.slice(0, 35) : 'Risk High'}`;
+              debCroEl.style.color = 'var(--loss-red)';
+            } else {
+              debCroEl.innerText = 'VETO POWER ACTIVE';
+              debCroEl.style.color = 'var(--text-main)';
+            }
+          }
+
+          // Paperclip Sub-Agent Heartbeat Matrix
+          const hbMatrix = document.getElementById('agent-heartbeat-matrix');
+          const heartbeats = data.agent_heartbeats || {};
+          if (hbMatrix && Object.keys(heartbeats).length > 0) {
+            const labels = {
+              scout_harvester: 'Scout',
+              safety_sentinel: 'Safety',
+              ml_brain: 'ML Brain',
+              regime_detector: 'Regime',
+              news_sentinel: 'News',
+              whale_tracker: 'Whale',
+              shadow_auditor: 'Shadow',
+              strategy_autotuner: 'AutoTuner',
+              risk_committee: 'Risk Comm'
+            };
+            hbMatrix.innerHTML = Object.entries(labels).map(([key, label], idx) => {
+              const diffSec = Number(heartbeats[key] !== undefined ? heartbeats[key] : 5);
+              const isAlive = diffSec < 180;
+              const color = isAlive ? 'var(--win-green)' : 'var(--loss-red)';
+              const statusText = isAlive ? `● Active (${diffSec}s)` : '○ Stalled';
+              const colSpan = idx === 8 ? 'grid-column: span 2;' : '';
+              return `
+                <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; display: flex; justify-content: space-between; ${colSpan}">
+                  <span>${label}</span> <span style="color: ${color};">${statusText}</span>
+                </div>
+              `;
+            }).join('');
           }
           
           const totalCapital = Number(mLeft) + Number(mInv);
@@ -1079,6 +1204,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "network_status": {"tps": 3250, "user_tps": 1200, "est_gas_inr": 0.50, "congestion": "OPTIMAL", "safe_to_trade": True},
                 "best_runner": {"symbol": "None", "pnl_pct": 0.0, "time": "—"},
                 "consecutive_losses": 0,
+                "latest_debate": {
+                    "token": "None", "time": "—", "bull_score": 0.0, "bull_thesis": "Awaiting candidate scan",
+                    "bear_score": 0.0, "bear_thesis": "Awaiting candidate scan", "verdict": "STANDBY",
+                    "veto_reason": None, "sizing_mult": 1.0
+                },
+                "agent_heartbeats": {
+                    "scout_harvester": 5.0, "safety_sentinel": 5.0, "ml_brain": 5.0, "regime_detector": 5.0,
+                    "news_sentinel": 5.0, "whale_tracker": 5.0, "shadow_auditor": 5.0, "strategy_autotuner": 5.0,
+                    "risk_committee": 5.0
+                },
                 "positions": []
             }
 

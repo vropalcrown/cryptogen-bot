@@ -19,7 +19,8 @@ from config import (
 from quant_math import (
     ATA_RENT_EXEMPTION_SOL, BASE_TX_FEE_SOL, AVERAGE_PRIORITY_FEE_SOL,
     calculate_amm_price_impact, calculate_fractional_kelly_size,
-    calculate_holder_concentration_hhi
+    calculate_holder_concentration_hhi, calculate_hurst_exponent,
+    calculate_vwap_deviation
 )
 from safety import analyze_token_safety
 from data_collector import fetch_dex_token_data, fetch_trending_solana_tokens, fetch_sol_macro_context, fetch_solana_network_status
@@ -28,6 +29,7 @@ from ml_brain import CryptoGenBrain
 from onchain_executor import SolanaOnChainExecutor, SOL_MINT
 from ata_reclaimer import ATARentReclaimer
 from telegram_notifier import send_telegram_alert, poll_telegram_commands
+from adversarial_committee import AdversarialCommittee
 
 # === NEW INTELLIGENCE MODULES ===
 from trade_journal import TradeJournal
@@ -88,6 +90,22 @@ class AutonomousDemoTrader:
         self.network_status = {"tps": 3250, "user_tps": 1200, "est_gas_inr": 0.50, "congestion": "OPTIMAL"}
         self.best_runner = {"symbol": "None", "pnl_pct": 0.0, "time": "—"}
         self.session_start = time.time()
+
+        # Multi-Agent Investment Committee (TauricResearch TradingAgents)
+        self.committee = AdversarialCommittee()
+
+        # Multi-Agent Heartbeat Matrix (Paperclip Governance)
+        self.agent_heartbeats = {
+            "scout_harvester": time.time(),
+            "safety_sentinel": time.time(),
+            "ml_brain": time.time(),
+            "regime_detector": time.time(),
+            "news_sentinel": time.time(),
+            "whale_tracker": time.time(),
+            "shadow_auditor": time.time(),
+            "strategy_autotuner": time.time(),
+            "risk_committee": time.time()
+        }
 
         # Compounding Ladder Tracking
         self.current_cycle_idx = 0  # Starts at Cycle 1 (index 0)
@@ -488,6 +506,8 @@ class AutonomousDemoTrader:
                     "symbol": "None", "pnl_pct": 0.0, "time": "—"
                 }),
                 "consecutive_losses": getattr(self, "consecutive_losses", 0),
+                "latest_debate": getattr(self.committee, "latest_debate", {}),
+                "agent_heartbeats": {k: round(time.time() - v, 1) for k, v in getattr(self, "agent_heartbeats", {}).items()},
                 "is_live": getattr(self, "is_live", False)
             }
 
@@ -815,6 +835,14 @@ class AutonomousDemoTrader:
         print(f"   {regime.get('emoji', '')} Market Regime: {regime['regime']} "
               f"(Confidence: {regime.get('confidence', 0)*100:.0f}%) — {regime.get('description', '')}")
 
+        # Refresh Paperclip Heartbeats
+        now = time.time()
+        if hasattr(self, "agent_heartbeats"):
+            self.agent_heartbeats["regime_detector"] = now
+            self.agent_heartbeats["strategy_autotuner"] = now
+            self.agent_heartbeats["news_sentinel"] = now
+            self.agent_heartbeats["whale_tracker"] = now
+
         # 2.5 Dynamic Auto-Tuner Calibration (Triggers on regime shift or periodic 6h cycle)
         if hasattr(self, "autotuner") and (regime_shifted or (time.time() - getattr(self.autotuner, "last_tuned_at", 0) >= 21600)):
             tune_res = self.autotuner.evaluate_and_tune(manual=False)
@@ -867,6 +895,9 @@ class AutonomousDemoTrader:
         print("---")
 
     async def scan_and_trade(self, candidate_addresses: list):
+        if hasattr(self, "agent_heartbeats"):
+            self.agent_heartbeats["scout_harvester"] = time.time()
+
         # Check User Remote Pause
         if self.is_paused:
             print(f"   [PAUSED] Bot is paused by user. Skipping new token buys.")
@@ -987,6 +1018,18 @@ class AutonomousDemoTrader:
                         self.log_activity("📉", f"Filtered {symbol}: Price impact {price_impact*100:.1f}% too high")
                         return None
 
+                    # Filter 3.5: OpenBB Quantitative Math (Hurst Exponent & VWAP Deviation)
+                    price_hist = live_data.get("price_history") or [price * (1.0 - 0.01 * i) for i in range(12, 0, -1)]
+                    hurst_res = calculate_hurst_exponent(price_hist)
+                    if hurst_res.get("interpretation") == "MEAN_REVERTING_CHOP":
+                        self.log_activity("📐", f"Filtered {symbol}: Mean-reverting chop (Hurst H={hurst_res['hurst']})")
+                        return None
+
+                    vwap_res = calculate_vwap_deviation(price, price_hist)
+                    if not vwap_res.get("safe_to_buy", True):
+                        self.log_activity("📐", f"Filtered {symbol}: Overextended above VWAP (Z={vwap_res['z_score']})")
+                        return None
+
                     # Filter 4: Feature Extraction & ML Prediction
                     features = extract_features_from_token_data(live_data)
                     meta_bonus = self.meta_tracker.get_meta_bonus(name, symbol)
@@ -1075,8 +1118,39 @@ class AutonomousDemoTrader:
                 print(f"   🐋 Whale Bonus: +{whale_bonus*100:.0f}% (Tracked Smart Money Accumulated)")
             print(f"   ML Confidence: {win_prob*100:.1f}% (Required: {entry_threshold*100:.0f}%)")
 
-            # Position Sizing via Kelly (regime-adjusted)
+            # Multi-Agent Adversarial Debate Committee (TauricResearch TradingAgents)
+            now = time.time()
+            if hasattr(self, "agent_heartbeats"):
+                self.agent_heartbeats["risk_committee"] = now
+                self.agent_heartbeats["ml_brain"] = now
+                self.agent_heartbeats["safety_sentinel"] = now
+
+            net_gas = self.network_status.get("est_gas_inr", 0.50) if hasattr(self, "network_status") else 0.50
+            debate = self.committee.conduct_debate(
+                candidate=candidate,
+                live_data=live_data,
+                gas_inr=net_gas,
+                consecutive_losses=self.consecutive_losses
+            )
+            print(f"   🏛️ [ADVERSARIAL COMMITTEE] {symbol}: 🐂 Bull {debate['bull_score']} vs 🐻 Bear {debate['bear_score']} -> {debate['verdict']}")
+            if debate["verdict"] == "VETOED":
+                print(f"   🛑 [RISK OFFICER VETO] {debate['veto_reason']}. Entry aborted to protect capital.")
+                self.log_activity("🛑", f"Vetoed {symbol}: {debate['veto_reason'][:30]}")
+                if hasattr(self, "shadow_tracker"):
+                    self.shadow_tracker.register_rejected_token(
+                        address=addr,
+                        symbol=symbol,
+                        name=name,
+                        price=price,
+                        reason=f"Risk Veto: {debate['veto_reason'][:30]}",
+                        features=features,
+                        win_prob=win_prob
+                    )
+                continue
+
+            # Position Sizing via Kelly (regime & risk committee adjusted)
             size_inr = self.calculate_kelly_position_size(win_prob)
+            size_inr = round(size_inr * debate.get("sizing_mult", 1.0), 2)
             if size_inr < 22.0:
                 print(f"   Position sizing INR{size_inr:.2f} below INR22 fee-shielded floor. Skipping.")
                 continue
@@ -1084,7 +1158,6 @@ class AutonomousDemoTrader:
             # ATA Rent Reservation (Refunded upon sell)
             ata_locked = min(5.0, self.portfolio_inr * 0.05)
             # Solana Network Gas + Raydium 0.3% AMM fee
-            net_gas = self.network_status.get("est_gas_inr", 0.50) if hasattr(self, "network_status") else 0.50
             buy_fee_inr = round(net_gas + (size_inr * 0.003), 2)
 
             self.locked_ata_rent_inr += ata_locked
@@ -1140,6 +1213,7 @@ class AutonomousDemoTrader:
                 "regime_at_entry": self.current_regime.get("regime", "UNKNOWN"),
                 "tp_stages_hit": 0,
                 "outcome_recorded": False,
+                "debate": debate,
                 "tp_stages": [
                     {"mult": tp1, "price": price * tp1, "ratio": tp1_ratio, "hit": False},
                     {"mult": tp2, "price": price * tp2, "ratio": tp2_ratio, "hit": False},
@@ -1161,7 +1235,7 @@ class AutonomousDemoTrader:
                 "timestamp": time.time(),
                 "token": symbol,
                 "address": addr,
-                "action": "BUY",
+                "action": f"BUY ({regime_tag})",
                 "price": price,
                 "size_inr": round(size_inr, 2),
                 "gain_loss_inr": 0.0,
@@ -1196,6 +1270,8 @@ class AutonomousDemoTrader:
         Updates prices, manages stop-loss/take-profit, logs to trade journal,
         and triggers reinforcement learning with failure categorization.
         """
+        if hasattr(self, "agent_heartbeats"):
+            self.agent_heartbeats["shadow_auditor"] = time.time()
         closed_addrs = []
 
         for addr, pos in list(self.active_positions.items()):

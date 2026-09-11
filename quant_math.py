@@ -94,3 +94,118 @@ def calculate_fractional_kelly_size(
     # Cap at hardcoded maximum rule (20% of portfolio)
     final_pct = min(adjusted_kelly, max_cap_pct)
     return round(portfolio_inr * final_pct, 2)
+
+# =====================================================================
+#             OPENBB-INSPIRED QUANTITATIVE TIME-SERIES MATH
+# =====================================================================
+
+def calculate_hurst_exponent(prices: list) -> dict:
+    """
+    Hurst Exponent (H) via Rescaled Range (R/S) Analysis:
+    Mathematically distinguishes genuine trend persistence from random-walk noise.
+      • H > 0.55: Persistent / Trending (Strong momentum follow-through)
+      • 0.45 <= H <= 0.55: Random Walk (Pure Brownian motion / noise)
+      • H < 0.45: Mean-Reverting / Anti-persistent (High false-breakout trap risk)
+    """
+    if not prices or len(prices) < 10:
+        return {"hurst": 0.52, "interpretation": "RANDOM_WALK", "is_trending": True, "confidence": "LOW_DATA"}
+
+    try:
+        arr = np.array(prices, dtype=float)
+        # Compute logarithmic returns
+        returns = np.diff(np.log(np.maximum(arr, 1e-12)))
+        if len(returns) < 8 or np.all(returns == 0):
+            return {"hurst": 0.50, "interpretation": "RANDOM_WALK", "is_trending": True, "confidence": "FLAT"}
+
+        # Rescaled range analysis across powers of 2
+        lags = [lag for lag in [4, 8, 16, 32, 64] if lag <= len(returns) // 2]
+        if len(lags) < 2:
+            lags = [3, min(6, len(returns))]
+
+        rs_values = []
+        valid_lags = []
+
+        for lag in lags:
+            num_chunks = len(returns) // lag
+            if num_chunks == 0:
+                continue
+            chunk_rs = []
+            for i in range(num_chunks):
+                chunk = returns[i * lag:(i + 1) * lag]
+                chunk_mean = np.mean(chunk)
+                cum_dev = np.cumsum(chunk - chunk_mean)
+                r = np.max(cum_dev) - np.min(cum_dev)
+                s = np.std(chunk, ddof=1) if len(chunk) > 1 else np.std(chunk)
+                if s > 1e-10:
+                    chunk_rs.append(r / s)
+            if chunk_rs:
+                rs_values.append(np.mean(chunk_rs))
+                valid_lags.append(lag)
+
+        if len(valid_lags) >= 2:
+            poly = np.polyfit(np.log(valid_lags), np.log(rs_values), 1)
+            hurst = float(np.clip(poly[0], 0.05, 0.95))
+        else:
+            hurst = 0.50
+
+        if hurst > 0.55:
+            interp = "PERSISTENT_TREND"
+            is_trend = True
+        elif hurst < 0.45:
+            interp = "MEAN_REVERTING_CHOP"
+            is_trend = False
+        else:
+            interp = "RANDOM_WALK"
+            is_trend = True  # Neutral
+
+        return {
+            "hurst": round(hurst, 3),
+            "interpretation": interp,
+            "is_trending": is_trend,
+            "confidence": "HIGH" if len(valid_lags) >= 3 else "MODERATE"
+        }
+    except Exception:
+        return {"hurst": 0.50, "interpretation": "RANDOM_WALK", "is_trending": True, "confidence": "FALLBACK"}
+
+def calculate_vwap_deviation(curr_price: float, price_history: list, volume_history: list = None) -> dict:
+    """
+    Volume-Weighted Average Price (VWAP) & Standard Deviation Bands:
+    Prevents 'buying the top' when a micro-cap is overextended beyond +2.5 sigma from institutional VWAP.
+    """
+    if not price_history:
+        return {"vwap": curr_price, "z_score": 0.0, "status": "AT_VWAP", "safe_to_buy": True}
+
+    prices = np.array(price_history, dtype=float)
+    if volume_history and len(volume_history) == len(price_history):
+        volumes = np.array(volume_history, dtype=float)
+        tot_vol = np.sum(volumes)
+        vwap = float(np.sum(prices * volumes) / tot_vol) if tot_vol > 0 else float(np.mean(prices))
+    else:
+        vwap = float(np.mean(prices))
+
+    std = float(np.std(prices))
+    if std <= 1e-12:
+        z_score = 0.0
+    else:
+        z_score = float((curr_price - vwap) / std)
+
+    if z_score > 2.5:
+        status = "OVEREXTENDED_TOP"
+        safe = False
+    elif z_score > 1.0:
+        status = "BULLISH_ABOVE_VWAP"
+        safe = True
+    elif z_score < -1.5:
+        status = "DISCOUNTED_SUPPORT"
+        safe = True
+    else:
+        status = "HEALTHY_BAND"
+        safe = True
+
+    return {
+        "vwap": round(vwap, 8),
+        "z_score": round(z_score, 2),
+        "status": status,
+        "safe_to_buy": safe
+    }
+
