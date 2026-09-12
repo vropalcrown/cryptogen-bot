@@ -451,11 +451,11 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;background:var(--cyan
       <span class="scr" data-text="AUTONOMOUS SNIPER">AUTONOMOUS SNIPER</span><br>
       <span class="l2 scr" data-text="QUANT CORE ONLINE">QUANT CORE ONLINE</span><span class="crs"></span>
     </h1>
-    <p class="h-sub">&gt;&gt; Fusing a <b>dual ML ensemble</b>, a <b>genetic evolution bay</b>, an <b>adversarial debate committee</b>
+    <p class="h-sub">&gt;&gt; Fusing a <b>dual ML ensemble</b>, a <b>regime autotuner</b>, a <b>multi-tier risk committee</b>
       and a <b>shadow lookback engine</b> into one autonomous Solana desk. Rugs dodged before they rupture. Winners trailed to the moon bag.</p>
     <div class="h-cta">
       <button class="btn-sci" onclick="location.href='#deck'">▶ OPEN COMMAND DECK</button>
-      <button class="btn-sci alt" onclick="location.href='#evo'">🧬 ENTER EVOLUTION BAY</button>
+      <button class="btn-sci alt" onclick="location.href='#evo'">📊 VIEW PROVING GROUND</button>
     </div>
     <div class="h-stats">
       <div class="hs"><div class="v up" id="hsDodged">0</div><div class="l">CRASHES DODGED</div></div>
@@ -629,7 +629,7 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;background:var(--cyan
 
     <div style="display:flex;flex-direction:column;gap:14px">
       <div class="hud reveal">
-        <div class="hud-h"><div class="hud-t">GENOME HYPERPARAMETERS</div><span class="tag mg">LIVE APPLIED PARAMS</span></div>
+        <div class="hud-h"><div class="hud-t">STRATEGY HYPERPARAMETERS</div><span class="tag mg">LIVE APPLIED PARAMS</span></div>
         <div class="hud-b"><canvas id="genome"></canvas><div class="gene-row" id="geneRow"></div></div>
       </div>
       <div class="hud reveal">
@@ -648,7 +648,7 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;background:var(--cyan
   </div>
   <div class="rad-grid">
     <div class="hud reveal">
-      <div class="hud-h"><div class="hud-t">NEURAL CORE</div><span class="tag gr">RL ACTIVE</span></div>
+      <div class="hud-h"><div class="hud-t">TABULAR ML ENSEMBLE</div><span class="tag gr">ONLINE REFITTING</span></div>
       <div class="hud-b" style="display:flex;flex-direction:column;align-items:center">
         <svg class="gauge-svg" viewBox="0 0 180 110">
           <path d="M14 104 A 76 76 0 0 1 166 104" fill="none" stroke="#0a1e30" stroke-width="11" stroke-linecap="round"/>
