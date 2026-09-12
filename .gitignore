@@ -24,3 +24,5 @@ brain_state.json
 shadow_state.json
 meta_history.json
 regime_history.json
+coindcx_state.json
+coindcx_journal.csv

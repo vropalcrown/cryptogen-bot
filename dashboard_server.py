@@ -2238,6 +2238,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 ]
 
             self.wfile.write(json.dumps(state).encode("utf-8"))
+        elif self.path == "/api/coindcx_state":
+            self._send_security_headers(200, "application/json")
+            self.end_headers()
+            cdcx_file = os.path.join(os.path.dirname(__file__), "coindcx_state.json")
+            cdcx_data = {
+                "portfolio_inr": 100.0,
+                "active_position": None,
+                "trade_history": [],
+                "total_realized_pnl": 0.0,
+                "total_trades": 0,
+                "win_rate_pct": 0.0
+            }
+            if os.path.exists(cdcx_file):
+                try:
+                    with open(cdcx_file, "r", encoding="utf-8") as f:
+                        cdcx_data = json.load(f)
+                except Exception:
+                    pass
+            self.wfile.write(json.dumps(cdcx_data).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
