@@ -50,7 +50,7 @@ EMERGENCY_RESERVE_INR = 15.0    # Rule 6: ₹15 reserve locked for gas
 MAX_SLIPPAGE_BPS = 100          # 1.0% slippage (100 basis points)
 
 # Safety Rules
-MIN_LIQUIDITY_USD = 5000.0
+MIN_LIQUIDITY_USD = 25000.0
 MAX_TOP_HOLDER_PERCENT = 15.0
 MIN_SAFETY_SCORE = 70.0
 

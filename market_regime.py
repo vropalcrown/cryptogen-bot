@@ -175,15 +175,15 @@ class MarketRegimeDetector:
                 "description": "Market recovering — normal mode"
             },
             "CRAB": {
-                "ml_threshold": 0.75,        # Higher bar — picky in crab
-                "kelly_multiplier": 0.6,      # Smaller positions
-                "max_concurrent": 2,
+                "ml_threshold": 0.82,        # Higher bar — picky in crab (≥82%)
+                "kelly_multiplier": 0.5,      # Smaller positions
+                "max_concurrent": 1,         # Only 1 trade open in sideways chop
                 "scan_interval_secs": 60,
-                "description": "Sideways market — conservative mode"
+                "description": "Sideways market — high conviction sniper mode (≥82%)"
             },
             "BEAR": {
-                "ml_threshold": 0.85,         # Very high bar
-                "kelly_multiplier": 0.3,      # Tiny positions
+                "ml_threshold": 0.88,         # Very high bar (≥88%)
+                "kelly_multiplier": 0.25,     # Tiny positions
                 "max_concurrent": 1,
                 "scan_interval_secs": 120,
                 "description": "Downtrend — defensive mode, capital preservation"

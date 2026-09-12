@@ -14,7 +14,7 @@ from config import (
     STARTING_BALANCE_INR, TARGET_BALANCE_INR,
     STOP_LOSS_PERCENT, TAKE_PROFIT_STAGES,
     EMERGENCY_RESERVE_INR, SOL_TO_INR_ESTIMATE, PAPER_TRADING,
-    PERSONAL_WITHDRAWAL_WALLET, COMPOUNDING_LADDER
+    PERSONAL_WITHDRAWAL_WALLET, COMPOUNDING_LADDER, MIN_LIQUIDITY_USD
 )
 from quant_math import (
     ATA_RENT_EXEMPTION_SOL, BASE_TX_FEE_SOL, AVERAGE_PRIORITY_FEE_SOL,
@@ -1047,12 +1047,24 @@ class AutonomousDemoTrader:
         survival_min_conf = getattr(self, "survival_tier", None).min_confidence if hasattr(self, "survival_tier") else 0.70
         entry_threshold = max(self.brain.get_adaptive_threshold(regime_threshold), survival_min_conf)
 
+        # Crab / Bear Regime Guard: Enforce ≥82% minimum confidence floor
+        cur_regime = self.current_regime.get("regime", "")
+        if cur_regime in ("CRAB", "BEAR"):
+            entry_threshold = max(entry_threshold, 0.82)
+            print(f"   🦀 [{cur_regime} REGIME GUARD] Enforcing sniper confidence floor: {entry_threshold*100:.0f}%")
+
+        # Bearish News Sentinel Guard: Enforce ≥82% confidence floor if sentiment is negative
+        nr = getattr(self, "news_report", {})
+        if nr.get("sentiment_label") == "BEARISH" or nr.get("sentiment_score", 0.0) <= -0.30:
+            entry_threshold = max(entry_threshold, 0.82)
+            print(f"   📰 [BEARISH NEWS GUARD] News sentiment is {nr.get('sentiment_label')} ({nr.get('sentiment_score', 0.0):+.2f}). Enforcing entry bar: {entry_threshold*100:.0f}%")
+
         # Dynamic Caution Bump: On 2+ consecutive losses, raise entry bar by +3% to filter choppy market noise
         if getattr(self, "consecutive_losses", 0) >= 2:
             entry_threshold += 0.03
             print(f"   🛡️ [CAUTION BUMP] {self.consecutive_losses} consecutive losses. Raising entry threshold +3% -> {entry_threshold*100:.1f}%")
 
-        min_pool_liq = self.survival_tier.min_liquidity_usd if hasattr(self, "survival_tier") else 5000.0
+        min_pool_liq = max(MIN_LIQUIDITY_USD, getattr(getattr(self, "survival_tier", None), "min_liquidity_usd", MIN_LIQUIDITY_USD))
         print(f"   [THRESHOLD] Entry bar: {entry_threshold*100:.0f}% (Regime: {regime_threshold*100:.0f}%, Survival: {survival_min_conf*100:.0f}%, Min Liq: ${min_pool_liq:,.0f})")
 
         # Stage 1: Concurrent Pre-Filter with Semaphore(6) rate limiting

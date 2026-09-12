@@ -107,10 +107,10 @@ class BearAnalyst:
 
         # 3. Micro Liquidity Slippage
         liq = candidate.get("liq", 0)
-        if liq < 8000:
-            score += 25.0
-            red_flags.append(f"Thin Liquidity Pool (${liq:,.0f})")
-        elif liq < 15000:
+        if liq < 25000:
+            score += 35.0
+            red_flags.append(f"Sub-$25k Liquidity Pool (${liq:,.0f})")
+        elif liq < 50000:
             score += 10.0
             red_flags.append(f"Moderate Liquidity (${liq:,.0f})")
 
@@ -143,8 +143,13 @@ class ChiefRiskOfficer:
         veto = False
         veto_reason = None
 
+        # VETO RULE 0: Micro-Liquidity Floor (< $25,000)
+        if candidate.get("liq", 0) < 25000:
+            veto = True
+            veto_reason = f"Liquidity ${candidate.get('liq', 0):,.0f} < $25,000 safety floor"
+
         # VETO RULE 1: Bear Risk Dominates
-        if bear["score"] >= 65.0:
+        elif bear["score"] >= 65.0:
             veto = True
             veto_reason = f"Bear Risk Score Too High ({bear['score']}/100): {bear['red_flags'][0] if bear['red_flags'] else 'Excessive downside'}"
 
@@ -154,9 +159,9 @@ class ChiefRiskOfficer:
             veto_reason = f"Insufficient Margin of Safety (Bull {bull['score']} vs Bear {bear['score']})"
 
         # VETO RULE 3: Elevated Loss Streak Caution
-        elif consecutive_losses >= 2 and win_prob < 0.78:
+        elif consecutive_losses >= 2 and win_prob < 0.82:
             veto = True
-            veto_reason = f"Caution Bump Active ({consecutive_losses} losses): Required Conviction >= 78% (Got {win_prob*100:.0f}%)"
+            veto_reason = f"Caution Bump Active ({consecutive_losses} losses): Required Conviction >= 82% (Got {win_prob*100:.0f}%)"
 
         # VETO RULE 4: Gas Spike Drain
         elif gas_inr >= 1.80:
