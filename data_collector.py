@@ -90,14 +90,33 @@ async def fetch_sol_macro_context() -> dict:
         "safe_to_trade": True
     }
 
+SOL_MINT = "So11111111111111111111111111111111111111112"
+NON_SNIPEABLE_MINTS = {
+    SOL_MINT,
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
+    "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh",  # WBTC
+    "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",  # WETH
+    "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",  # mSOL
+    "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1",  # bSOL
+    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",  # JitoSOL
+    "2b1kV6eusvdBidtUMewAnJMgqcgeypnEyFs8nwwFsNQ1",  # PYUSD
+    "USDH1SM1ojcxnv3Gec8wRgDnqtcbUAJJaXP8Ku21Spm",  # USDH
+}
+NON_SNIPEABLE_SYMBOLS = {"USDC", "USDT", "WBTC", "WETH", "SOL", "WSOL", "MSOL", "BSOL", "JITOSOL", "PYUSD", "USDH", "EURC", "DAI"}
+
 async def fetch_dex_token_data(token_address: str) -> dict:
     """
     Pulls live online trading data for any Solana token via DexScreener API:
+    - Filters out stablecoins and major wrapped tokens
     - 5m, 1h, 24h volume & price change
     - Buy count vs Sell count (Order flow sentiment)
     - Liquidity & Fully Diluted Valuation (FDV)
     - Wash Trading Detection
     """
+    if not token_address or token_address in NON_SNIPEABLE_MINTS:
+        return None
+
     url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
@@ -111,6 +130,9 @@ async def fetch_dex_token_data(token_address: str) -> dict:
                 return None
                 
             pair = pairs[0]  # Select primary liquid pair
+            sym = pair.get("baseToken", {}).get("symbol", "").upper()
+            if sym in NON_SNIPEABLE_SYMBOLS:
+                return None
             
             price_usd = float(pair.get("priceUsd", 0.0) or 0.0)
             liquidity_usd = float(pair.get("liquidity", {}).get("usd", 0.0) or 0.0)
@@ -140,13 +162,11 @@ async def fetch_dex_token_data(token_address: str) -> dict:
         except Exception as e:
             return None
 
-SOL_MINT = "So11111111111111111111111111111111111111112"
-
 async def fetch_trending_solana_tokens() -> list:
     """
-    Pulls high-conviction Solana trading candidates across 5 parallel multi-DEX sources:
-      1. Raydium Official v3 Pools API (Top 30 by 24h volume)
-      2. GeckoTerminal Trending Pools (Verified high-activity pools)
+    Multi-Source Real-Time Harvester:
+      1. Raydium API v3 Pool List (Sort by 24h volume)
+      2. GeckoTerminal Solana Trending Pools
       3. GeckoTerminal 24h Top Volume Pools (Deepest liquidity pools)
       4. DexScreener Top Community Boosts (Active retail momentum)
       5. DexScreener Latest Promoted Boosts (Early breakout velocity)
@@ -164,7 +184,7 @@ async def fetch_trending_solana_tokens() -> list:
                         mA = p.get("mintA", {}).get("address", "")
                         mB = p.get("mintB", {}).get("address", "")
                         tok = mB if mA == SOL_MINT else mA
-                        if tok and tok != SOL_MINT and len(tok) >= 32:
+                        if tok and tok not in NON_SNIPEABLE_MINTS and len(tok) >= 32:
                             candidates.append(tok)
             except Exception:
                 pass
@@ -177,7 +197,7 @@ async def fetch_trending_solana_tokens() -> list:
                     for pool in res.json().get("data", []):
                         base_id = pool.get("relationships", {}).get("base_token", {}).get("data", {}).get("id", "")
                         addr = base_id.replace("solana_", "")
-                        if addr and addr != SOL_MINT and len(addr) >= 32:
+                        if addr and addr not in NON_SNIPEABLE_MINTS and len(addr) >= 32:
                             candidates.append(addr)
             except Exception:
                 pass
@@ -190,7 +210,7 @@ async def fetch_trending_solana_tokens() -> list:
                     for pool in res.json().get("data", []):
                         base_id = pool.get("relationships", {}).get("base_token", {}).get("data", {}).get("id", "")
                         addr = base_id.replace("solana_", "")
-                        if addr and addr != SOL_MINT and len(addr) >= 32:
+                        if addr and addr not in NON_SNIPEABLE_MINTS and len(addr) >= 32:
                             candidates.append(addr)
             except Exception:
                 pass

@@ -17,6 +17,8 @@ import time
 
 load_dotenv()
 
+from config import MAX_SLIPPAGE_BPS
+
 JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1/quote"
 JUPITER_SWAP_API = "https://api.jup.ag/swap/v1/swap"
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -39,6 +41,7 @@ class SolanaOnChainExecutor:
         self.wallet_pubkey = None
         self.last_order_state = OrderState.PENDING_SUBMIT
         self.order_audit_trail = []
+        self._decimals_cache = {SOL_MINT: 9}
 
         if self.private_key_b58:
             try:
@@ -50,6 +53,33 @@ class SolanaOnChainExecutor:
                 print(f"🔑 [On-Chain Executor] Wallet loaded: {self.wallet_pubkey[:6]}...{self.wallet_pubkey[-6:]}")
             except Exception as e:
                 print(f"⚠️ [On-Chain Executor] Error parsing private key: {e}")
+
+    async def get_token_decimals(self, mint_address: str) -> int:
+        """Dynamically queries on-chain RPC for mint decimals (never hardcoded)."""
+        if not mint_address or mint_address == SOL_MINT:
+            return 9
+        if mint_address in self._decimals_cache:
+            return self._decimals_cache[mint_address]
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            try:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTokenSupply",
+                    "params": [mint_address]
+                }
+                res = await client.post(self.rpc_url, json=payload)
+                if res.status_code == 200:
+                    val = res.json().get("result", {}).get("value", {})
+                    dec = val.get("decimals")
+                    if dec is not None:
+                        dec_int = int(dec)
+                        self._decimals_cache[mint_address] = dec_int
+                        return dec_int
+            except Exception:
+                pass
+        return 6  # safe fallback if RPC unreachable
 
     def _transition_state(self, new_state: OrderState, details: str = ""):
         self.last_order_state = new_state
@@ -68,7 +98,7 @@ class SolanaOnChainExecutor:
         input_mint: str,
         output_mint: str,
         amount_lamports: int,
-        slippage_bps: int = 150 # 1.5% slippage
+        slippage_bps: int = MAX_SLIPPAGE_BPS
     ) -> dict:
         """
         Queries Jupiter v6 API for optimal swap route.

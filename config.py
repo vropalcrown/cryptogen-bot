@@ -3,8 +3,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Mode Setting: Read directly from .env (False = Live Real On-Chain Mode)
-PAPER_TRADING = os.getenv("PAPER_TRADING", "False").lower() in ("true", "1")  
+# Mode Setting: Default to True (Paper Trading Fail-Safe)
+PAPER_TRADING = os.getenv("PAPER_TRADING", "True").lower() in ("true", "1")  
 
 # Solana Network Configuration
 RPC_ENDPOINT = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
@@ -40,7 +40,7 @@ COMPOUNDING_LADDER = [
 
 STARTING_BALANCE_INR = 100.0
 TARGET_BALANCE_INR = 1000.0
-SOL_TO_INR_ESTIMATE = 13000.0   # Current approximate SOL/INR exchange rate
+SOL_TO_INR_ESTIMATE = 11500.0   # Calibrated live SOL/INR exchange rate estimate
 PERSONAL_WITHDRAWAL_WALLET = os.getenv("PERSONAL_SOLANA_WALLET", "")
 
 MAX_POSITION_PERCENT = 0.25     # Rule 1: 25% max position per trade

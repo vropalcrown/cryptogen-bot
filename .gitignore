@@ -19,5 +19,8 @@ Thumbs.db
 *.tmp
 live_state.json
 bot_state.json
+vault_state.json
+brain_state.json
+shadow_state.json
 meta_history.json
 regime_history.json

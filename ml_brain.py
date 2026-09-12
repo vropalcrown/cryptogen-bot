@@ -130,26 +130,30 @@ class CryptoGenBrain:
           - Journal failure-pattern adjustments
           - Feature importance awareness
         """
+        # === Calibrated Quantitative Base ===
         if not self.is_trained:
-            return 0.50
-
-        df = pd.DataFrame([features_dict])[self.feature_columns]
-
-        # === Primary model prediction ===
-        rf_prob = self._safe_predict_proba(self.model, df)
-
-        # === Secondary model prediction (ensemble) ===
-        gb_prob = self._safe_predict_proba(self.boost_model, df)
-
-        # Ensemble: weighted average (RF gets 60%, GBM gets 40%)
-        if gb_prob is not None:
-            base_prob = rf_prob * 0.60 + gb_prob * 0.40
+            # Calibrated cold-start quantitative scoring (never flat 0.50)
+            buy_r = features_dict.get("buy_ratio_5m", 0.5)
+            vol_acc = min(3.0, features_dict.get("vol_acceleration", 1.0))
+            ofi = features_dict.get("ofi_5m", 0.0)
+            pv_corr = features_dict.get("alpha_pv_corr", 0.0)
+            
+            # Base probability between 0.20 and 0.65 based on real order flow
+            q_score = 0.25 + (buy_r * 0.20) + (min(1.0, vol_acc / 2.0) * 0.10) + (max(0.0, ofi) * 0.05) + (max(0.0, pv_corr) * 0.05)
+            base_prob = min(0.68, max(0.15, q_score))
         else:
-            base_prob = rf_prob
+            df = pd.DataFrame([features_dict])[self.feature_columns]
+            rf_prob = self._safe_predict_proba(self.model, df)
+            gb_prob = self._safe_predict_proba(self.boost_model, df)
 
-        # === Apply meta narrative bonus ===
-        # Max +15% for tokens matching hot meta
-        prob_with_meta = min(0.99, base_prob + meta_bonus)
+            if gb_prob is not None:
+                base_prob = rf_prob * 0.60 + gb_prob * 0.40
+            else:
+                base_prob = rf_prob
+
+        # === Apply capped meta narrative bonus (max +5% to prevent artificial inflation) ===
+        capped_meta = min(0.05, max(0.0, meta_bonus))
+        prob_with_meta = min(0.99, base_prob + capped_meta)
 
         # === Apply journal failure-pattern adjustments ===
         if journal_weights:

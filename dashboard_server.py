@@ -432,6 +432,7 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;background:var(--cyan
   </nav>
   <div class="nav-r">
     <span class="sysclock" id="clock">--:--:--</span>
+    <span class="tag am" id="simBadge" style="font-size:10px;font-weight:700;letter-spacing:.1em;border:1px solid var(--amber);background:rgba(255,176,32,.12);color:var(--amber);padding:4px 10px;">🧪 PAPER SIMULATION MODE</span>
     <div class="pwr" id="pwrBox">
       <button data-p="ECO">ECO</button><button data-p="BALANCED">BAL</button>
       <button data-p="MAX" class="on">MAX</button><button data-p="SMART">SMART</button>
@@ -619,7 +620,7 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;background:var(--cyan
         </div>
       </div>
       <div class="hud reveal" id="vault">
-        <div class="hud-h"><div class="hud-t">STRATEGY VAULT · MONTE CARLO RANKED</div><span class="tag gr" id="vaultTag">9 TESTED CONFIGS</span></div>
+        <div class="hud-h"><div class="hud-t">STRATEGY VAULT · BENCHMARK REFERENCE CONFIGS</div><span class="tag cy" id="vaultTag">9 REFERENCE MODELS</span></div>
         <div class="tbl"><table>
           <thead><tr><th>STRATEGY</th><th>SCORE</th><th>P(₹1000)</th><th>P(RUIN)</th><th>WIN%</th><th>STATUS</th></tr></thead>
           <tbody id="vaultBody"></tbody></table></div>
@@ -827,15 +828,12 @@ function escapeHtml(str) {
 /* ================= BOOT SEQUENCE ================= */
 (function(){
   const lines=[
-    ["[OK] ","ok","CRYPTOGEN BIOS v2.7 — POST complete"],
-    ["[OK] ","ok","Solana RPC handshake · 4,316 TPS · gas ~₹0.50"],
-    ["[..] ","am","Loading dual ensemble: RF(60%) + GBM(40%) …"],
-    ["[OK] ","ok","Adaptive entry bar calibrated → 89%"],
-    ["[OK] ","ok","Shadow lookback engine armed · 40-token watchlist"],
-    ["[..] ","am","Tauric debate committee seated (🐂/🐻/🛡️)"],
-    ["[OK] ","ok","Genetic evolution bay online · tribe A spawned"],
-    ["[OK] ","ok","Nautilus order FSM · OpenAlgo bridge LISTENING"],
-    [">>>  ","cy","COMMAND DECK RENDER — WELCOME, OPERATOR"]
+    ["[OK] ","ok","CryptoGen Autonomous Core Initialized"],
+    ["[OK] ","ok","Solana RPC Handshake Established"],
+    ["[OK] ","ok","Dual ML Ensemble & Quantitative Alpha Armed"],
+    ["[OK] ","ok","Adversarial Committee & Risk Governance Online"],
+    ["[OK] ","ok","Connecting to Live Telemetry Feed..."],
+    [">>>  ","cy","COMMAND DECK READY — TELEMETRY SYNCHRONIZED"]
   ];
   const box=$("bootLines"),bar=$("bootBar"),boot=$("boot");
   let i=0,done=false;
@@ -1133,14 +1131,28 @@ function renderBook(){
 buildBook();
 $("tabBook").onclick=()=>{$("bookPane").style.display="";$("tapePane").style.display="none";$("tabBook").classList.add("on");$("tabTape").classList.remove("on");};
 $("tabTape").onclick=()=>{$("bookPane").style.display="none";$("tapePane").style.display="";$("tabTape").classList.add("on");$("tabBook").classList.remove("on");};
-function addTrade(){
-  const k=chart.data[chart.data.length-1],buy=Math.random()<(k.c>=k.o?.62:.38);
-  const row=document.createElement("div");row.className="tr";
-  row.innerHTML=`<span style="color:${DIM}">${now()}</span><span style="text-align:right" class="${buy?"up":"dn"}">${fmtPx(k.c*rnd(.999,1.001))}</span><span style="text-align:right;color:var(--dim)">${rnd(.4,38).toFixed(2)}</span><span style="text-align:right" class="${buy?"side-b up":"dn"}" >${buy?"BUY":"SELL"}</span>`;
-  const box=$("tradeRows");box.prepend(row);
-  while(box.children.length>22)box.lastChild.remove();
+
+function renderRealTrades(txList) {
+  const box = $("tradeRows");
+  if (!box) return;
+  if (!txList || !txList.length) {
+    box.innerHTML = '<div style="padding:15px;color:var(--dim);text-align:center;font-size:11px;">Awaiting live on-chain fill events...</div>';
+    return;
+  }
+  box.innerHTML = txList.slice(0, 20).map(t => {
+    const isBuy = String(t.action || '').includes('BUY');
+    const sideClass = isBuy ? 'up side-b' : 'dn';
+    const sideTxt = isBuy ? 'BUY' : 'SELL';
+    const px = t.price ? fmtPx(t.price) : '—';
+    const sz = t.size_inr ? `₹${Number(t.size_inr).toFixed(1)}` : '—';
+    return `<div class="tr">
+      <span style="color:${DIM}">${escapeHtml(t.time || '')}</span>
+      <span style="text-align:right" class="${isBuy ? 'up' : 'dn'}">${px}</span>
+      <span style="text-align:right;color:var(--dim)">${sz}</span>
+      <span style="text-align:right" class="${sideClass}">${sideTxt}</span>
+    </div>`;
+  }).join('');
 }
-for(let i=0;i<10;i++)addTrade();
 
 /* ============ POSITIONS + WALLET ============ */
 const wallet={cash:100.0,invested:0,fees:0.0,pnl:0,wins:0,loss:0};
@@ -1381,6 +1393,27 @@ async function syncBotState() {
       }
     }
 
+    // Real trades tape update
+    if (data.transactions) renderRealTrades(data.transactions);
+
+    // Agent heartbeats update
+    if (data.agent_heartbeats && window.__updateHeartbeats) window.__updateHeartbeats(data.agent_heartbeats);
+
+    // Simulation Badge update
+    if ($('simBadge')) {
+      if (data.is_live) {
+        $('simBadge').textContent = '⚡ REAL SOL ON-CHAIN';
+        $('simBadge').style.borderColor = 'var(--green)';
+        $('simBadge').style.color = 'var(--green)';
+        $('simBadge').style.background = 'rgba(45,255,163,.12)';
+      } else {
+        $('simBadge').textContent = '🧪 PAPER SIMULATION MODE';
+        $('simBadge').style.borderColor = 'var(--amber)';
+        $('simBadge').style.color = 'var(--amber)';
+        $('simBadge').style.background = 'rgba(255,176,32,.12)';
+      }
+    }
+
     // Auto status
     const isPaused = !!data.is_paused;
     if ($('autoTag')) {
@@ -1410,7 +1443,6 @@ setInterval(()=>{
   if(tickN%8===0){chart.data.push({t:Date.now(),o:k.c,h:k.c*1.0004,l:k.c*.9996,c:k.c*(1+rnd(-1,1)*cfg.vol*.2),v:rnd(40,120)});
     if(chart.data.length>chart.N)chart.data.shift();buildBook();}
   drawChart();updateOhlc();
-  if(Math.random()<.7)addTrade();
 },900);
 setInterval(()=>{
   for(const side of["bids","asks"])for(const l of book[side])l.s=Math.max(4,l.s*rnd(.82,1.2));
@@ -1571,13 +1603,36 @@ if (termInput) {
 }
 
 /* ============ HEARTBEATS + ALPHA ============ */
-const agents=[["Scout",1],["Safety",1],["ML Brain",1],["Regime",1],["News",1],["Whale",1],["Shadow",1],["AutoTuner",1],["Risk Comm",1]];
+const agentMap = [
+  ["Scout", "scout_harvester"],
+  ["Safety", "safety_sentinel"],
+  ["ML Brain", "ml_brain"],
+  ["Regime", "regime_detector"],
+  ["News", "news_sentinel"],
+  ["Whale", "whale_tracker"],
+  ["Shadow", "shadow_auditor"],
+  ["AutoTuner", "strategy_autotuner"],
+  ["Risk Comm", "risk_committee"]
+];
+let agentList = agentMap.map(m => [m[0], 1, 5.0]);
 function renderHB(){
-  $("hbGrid").innerHTML=agents.map(a=>`<div class="hb"><span class="d ${a[1]?"on":"off"}"></span><span class="n">${a[0]}</span><span class="s ${a[1]?"on":""}">${a[1]?"● "+rnd(3,9).toFixed(1)+"s":"○ STALLED"}</span></div>`).join("");
-  $("hbAlive").textContent=agents.filter(a=>a[1]).length+"/"+agents.length;
+  $("hbGrid").innerHTML = agentList.map(a => `<div class="hb"><span class="d ${a[1] ? "on" : "off"}"></span><span class="n">${a[0]}</span><span class="s ${a[1] ? "on" : ""}">${a[1] ? "● " + a[2].toFixed(1) + "s" : "○ STALLED"}</span></div>`).join("");
+  $("hbAlive").textContent = agentList.filter(a => a[1]).length + "/" + agentList.length;
 }
 renderHB();
-setInterval(()=>{agents.forEach((a,i)=>{if(Math.random()<(i%4===1?.18:.06))a[1]=a[1]?0:1;});renderHB();},4200);
+window.__updateHeartbeats = function(hbData) {
+  if (!hbData) return;
+  const nowSec = Date.now() / 1000;
+  agentMap.forEach((m, idx) => {
+    const lastTs = hbData[m[1]];
+    if (lastTs !== undefined) {
+      const age = Math.max(0.1, nowSec - lastTs);
+      const alive = age < 90 ? 1 : 0;
+      agentList[idx] = [m[0], alive, age];
+    }
+  });
+  renderHB();
+};
 
 const alphas=[["🐋","SMART MONEY TRACKER"],["🕵","DEV BUNDLER AUDITING"],["📰","REAL-TIME NEWS SENTINEL"],["🛡","ANTI-FAKE-NEWS RPC PROOF"],["📈","DYNAMIC TRAILING ESCALATOR"],["⚖","TRIANGULAR ARBITRAGE GATE"],["🎯","FALSE-NEGATIVE SHADOW RADAR"],["📊","QLIB ALPHA FACTORS"],["🔧","FREQTRADE RANGE FILTER"],["💧","HUMMINGBOT MICRO-DEPTH"],["⚙","NAUTILUS ORDER FSM"],["📡","OPENALGO WEBHOOK BRIDGE"]];
 $("alphaGrid").innerHTML=alphas.map(a=>`<div class="hud alpha reveal"><span class="e">${a[0]}</span><span class="n">${a[1]}</span><span class="s"></span></div>`).join("");
@@ -1931,12 +1986,31 @@ REAL_STRATEGY_VAULT = [
 GLOBAL_TRADER_REF = None
 
 import secrets
+import hmac
+
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
 if not ADMIN_TOKEN:
     ADMIN_TOKEN = secrets.token_hex(16)
     print(f"🔑 [SECURITY] Ephemeral Session Admin Token: {ADMIN_TOKEN}")
 
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", ADMIN_TOKEN).strip()
+
+# B7: IP-based Failure Rate Limiting (Mitigates brute force on auth endpoints)
+_AUTH_FAILURES = {}  # ip -> [timestamp, ...]
+
+def _is_rate_limited(ip: str) -> bool:
+    now = time.time()
+    history = _AUTH_FAILURES.get(ip, [])
+    # Retain failures in the last 60 seconds
+    history = [t for t in history if now - t < 60]
+    _AUTH_FAILURES[ip] = history
+    return len(history) >= 5
+
+def _record_auth_failure(ip: str):
+    now = time.time()
+    if ip not in _AUTH_FAILURES:
+        _AUTH_FAILURES[ip] = []
+    _AUTH_FAILURES[ip].append(now)
 
 def set_trader_instance(trader):
     global GLOBAL_TRADER_REF
@@ -1967,13 +2041,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
+        client_ip = self.client_address[0] if self.client_address else "unknown"
         auth_header = self.headers.get("Authorization", "")
         auth_token = auth_header.replace("Bearer ", "").strip() if auth_header.startswith("Bearer ") else ""
 
         if self.path == "/api/webhook":
-            # OpenAlgo / TradingView Webhook Bridge - Requires Authentication
+            if _is_rate_limited(client_ip):
+                self._send_security_headers(429, "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "RATE_LIMITED", "reason": "Too many failed attempts. Cooldown for 60s."}).encode("utf-8"))
+                return
+
             req_secret = payload.get("secret") or auth_token
-            if not req_secret or req_secret != WEBHOOK_SECRET:
+            if not req_secret or not hmac.compare_digest(str(req_secret), str(WEBHOOK_SECRET)):
+                _record_auth_failure(client_ip)
                 self._send_security_headers(401, "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "REJECTED", "reason": "Unauthorized: Valid webhook secret required"}).encode("utf-8"))
@@ -2009,9 +2090,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(result).encode("utf-8"))
 
         elif self.path == "/api/control":
-            # Admin Bot Controls - Requires Authentication
+            if _is_rate_limited(client_ip):
+                self._send_security_headers(429, "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "RATE_LIMITED", "reason": "Too many failed attempts. Cooldown for 60s."}).encode("utf-8"))
+                return
+
             req_token = payload.get("token") or payload.get("secret") or auth_token
-            if not req_token or req_token != ADMIN_TOKEN:
+            if not req_token or not hmac.compare_digest(str(req_token), str(ADMIN_TOKEN)):
+                _record_auth_failure(client_ip)
                 self._send_security_headers(401, "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "REJECTED", "reason": "Unauthorized: Valid admin token required"}).encode("utf-8"))

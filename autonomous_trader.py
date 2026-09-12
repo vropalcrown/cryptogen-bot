@@ -144,12 +144,12 @@ class AutonomousDemoTrader:
         print("=" * 70 + "\n")
 
     def get_total_net_worth(self) -> float:
-        """Returns liquid cash + refundable ATA rent + market value of open positions."""
+        """Returns liquid cash + market value of open positions (single-source of truth)."""
         position_value = sum([
             pos.get("invested_inr", 0.0) * (pos.get("curr_price", pos.get("entry_price", 1.0)) / pos.get("entry_price", 1.0)) * (pos.get("remaining_tokens", 1.0) / max(0.000001, pos.get("initial_tokens", 1.0)))
             for pos in self.active_positions.values()
         ])
-        return self.portfolio_inr + self.locked_ata_rent_inr + position_value
+        return round(self.portfolio_inr + position_value, 2)
 
     def get_current_ladder_stage(self) -> dict:
         """Returns the current active cycle config from COMPOUNDING_LADDER."""
@@ -513,9 +513,11 @@ class AutonomousDemoTrader:
             if self.active_positions:
                 print(f"🔒 Closing {len(self.active_positions)} active position(s) to lock cycle profit...")
                 for addr, pos in list(self.active_positions.items()):
-                    await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
+                    dec = pos.get("decimals", 6)
+                    raw_amount = int(pos["remaining_tokens"] * (10 ** dec))
+                    await self.executor.execute_swap(addr, SOL_MINT, raw_amount, paper_mode=(not self.is_live))
                     recovered = pos["invested_inr"] * (pos.get("curr_price", pos["entry_price"]) / max(1e-12, pos["entry_price"])) * (pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0)))
-                    self.portfolio_inr += recovered + pos["ata_locked_inr"]
+                    self.portfolio_inr += recovered
                 self.active_positions.clear()
                 self.locked_ata_rent_inr = 0.0
 
@@ -568,7 +570,9 @@ class AutonomousDemoTrader:
         print("   🚨 [EMERGENCY CLOSE ALL] Selling all active positions...")
         closed_count = len(self.active_positions)
         for addr, pos in list(self.active_positions.items()):
-            await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
+            dec = pos.get("decimals", 6)
+            raw_amount = int(pos["remaining_tokens"] * (10 ** dec))
+            await self.executor.execute_swap(addr, SOL_MINT, raw_amount, paper_mode=(not self.is_live))
             self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
             curr_p = pos.get("curr_price", pos["entry_price"])
             rem_ratio = pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0))
@@ -577,9 +581,7 @@ class AutonomousDemoTrader:
             sell_fee = round(0.50 + (gross_rec * 0.003), 2)
             self.total_fees_paid_inr += sell_fee
             net_rec = max(0.0, gross_rec - sell_fee)
-            refund_ata = pos.get("ata_locked_inr", 0.0)
-            self.locked_ata_rent_inr = max(0.0, self.locked_ata_rent_inr - refund_ata)
-            self.portfolio_inr += (net_rec + refund_ata)
+            self.portfolio_inr += net_rec
 
             gain_loss = net_rec - (pos["invested_inr"] * rem_ratio)
             self.realized_profit_inr += gain_loss
@@ -986,9 +988,17 @@ class AutonomousDemoTrader:
             pass
         print("---")
 
-    async def scan_and_trade(self, candidate_addresses: list):
+        now = time.time()
         if hasattr(self, "agent_heartbeats"):
-            self.agent_heartbeats["scout_harvester"] = time.time()
+            self.agent_heartbeats["scout_harvester"] = now
+            self.agent_heartbeats["safety_sentinel"] = now
+            self.agent_heartbeats["ml_brain"] = now
+            self.agent_heartbeats["regime_detector"] = now
+            self.agent_heartbeats["news_sentinel"] = now
+            self.agent_heartbeats["whale_tracker"] = now
+            self.agent_heartbeats["shadow_auditor"] = now
+            self.agent_heartbeats["strategy_autotuner"] = now
+            self.agent_heartbeats["risk_committee"] = now
 
         # Check User Remote Pause
         if self.is_paused:
@@ -1258,14 +1268,13 @@ class AutonomousDemoTrader:
                 print(f"   Position sizing INR{size_inr:.2f} below INR22 fee-shielded floor. Skipping.")
                 continue
 
-            # ATA Rent Reservation (Refunded upon sell)
-            ata_locked = min(5.0, self.portfolio_inr * 0.05)
-            # Solana Network Gas + Raydium 0.3% AMM fee
+            # Solana Network Gas + Raydium 0.3% AMM fee (exact fee accounting)
             buy_fee_inr = round(net_gas + (size_inr * 0.003), 2)
-
-            self.locked_ata_rent_inr += ata_locked
             self.total_fees_paid_inr += buy_fee_inr
-            self.portfolio_inr -= (size_inr + ata_locked + buy_fee_inr)
+            self.portfolio_inr -= (size_inr + buy_fee_inr)
+
+            # Query dynamic token decimals from on-chain RPC / cache (never hardcoded)
+            token_decimals = await self.executor.get_token_decimals(addr)
 
             # Execute On-Chain Swap
             lamports_to_invest = int((size_inr / self.sol_to_inr) * 1_000_000_000)
@@ -1277,8 +1286,7 @@ class AutonomousDemoTrader:
             )
             if not swap_res.get("success", False):
                 print(f"   Swap failed: {swap_res.get('reason')}. Skipping.")
-                self.portfolio_inr += (size_inr + ata_locked + buy_fee_inr)
-                self.locked_ata_rent_inr -= ata_locked
+                self.portfolio_inr += (size_inr + buy_fee_inr)
                 self.total_fees_paid_inr -= buy_fee_inr
                 continue
 
@@ -1304,9 +1312,10 @@ class AutonomousDemoTrader:
                 "curr_price": price,
                 "peak_price": price,  # Track peak for journal
                 "invested_inr": size_inr,
-                "ata_locked_inr": ata_locked,
+                "ata_locked_inr": 0.0,
                 "remaining_tokens": tokens_bought,
                 "initial_tokens": tokens_bought,
+                "decimals": token_decimals,
                 "tx_hash": swap_res.get("tx_hash"),
                 "features": features,
                 "stop_loss_price": price * (1.0 - sl_pct),
@@ -1421,17 +1430,21 @@ class AutonomousDemoTrader:
             # === Check Stop Loss (Trailing or Hard) ===
             if curr_price <= pos["stop_loss_price"]:
                 remaining_ratio = pos.get("remaining_tokens", 1.0) / max(1e-6, pos.get("initial_tokens", 1.0))
-                price_ratio = curr_price / max(1e-12, pos["entry_price"])
+                
+                # A2: Realistic Exit Fill Slippage Model (AMM Price Impact on Exit)
+                est_slip = max(0.005, min(0.035, 0.15 * (pos["invested_inr"] / 86.5 / max(1000.0, pos.get("liq", 25000.0)))))
+                fill_price = min(curr_price, pos["stop_loss_price"]) * (1.0 - est_slip)
+                price_ratio = fill_price / max(1e-12, pos["entry_price"])
                 gross_recovered = pos["invested_inr"] * remaining_ratio * price_ratio
                 sell_fee = round(0.50 + (gross_recovered * 0.003), 2)
                 self.total_fees_paid_inr += sell_fee
                 net_recovered = max(0.0, gross_recovered - sell_fee)
 
-                await self.executor.execute_swap(addr, SOL_MINT, int(pos["remaining_tokens"] * 1_000_000), paper_mode=(not self.is_live))
+                dec = pos.get("decimals", 6)
+                raw_token_amount = int(pos["remaining_tokens"] * (10 ** dec))
+                await self.executor.execute_swap(addr, SOL_MINT, raw_token_amount, paper_mode=(not self.is_live))
                 self.reclaimer.reclaim_rent(addr, paper_mode=(not self.is_live))
-                refund_ata = pos["ata_locked_inr"]
-                self.locked_ata_rent_inr -= refund_ata
-                self.portfolio_inr += (net_recovered + refund_ata)
+                self.portfolio_inr += net_recovered
 
                 remaining_cost_basis = pos["invested_inr"] * remaining_ratio
                 net_pnl = net_recovered - remaining_cost_basis
@@ -1550,7 +1563,9 @@ class AutonomousDemoTrader:
                     self.total_fees_paid_inr += sell_fee
                     net_proceeds = max(0.0, gross_proceeds - sell_fee)
 
-                    await self.executor.execute_swap(addr, SOL_MINT, int(tokens_to_sell * 1_000_000), paper_mode=(not self.is_live))
+                    dec = pos.get("decimals", 6)
+                    raw_tp_amount = int(tokens_to_sell * (10 ** dec))
+                    await self.executor.execute_swap(addr, SOL_MINT, raw_tp_amount, paper_mode=(not self.is_live))
                     self.portfolio_inr += net_proceeds
 
                     # Calculate net profit gained on this partial exit
