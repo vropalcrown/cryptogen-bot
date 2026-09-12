@@ -540,6 +540,54 @@ input[type=range]::-moz-range-thumb{width:15px;height:15px;background:var(--cyan
     </div>
   </div>
 
+  <!-- ================= COINDCX QUANT PAPER TRADER ================= -->
+  <div class="hud reveal" style="margin-top:14px;border:1px solid rgba(0, 229, 255, 0.45);box-shadow:0 0 20px rgba(0, 229, 255, 0.08);">
+    <div class="hud-h" style="background:rgba(0, 229, 255, 0.05);">
+      <div class="hud-t" style="color:var(--cyan2);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>🇮🇳 COINDCX QUANT PAPER TRADER</span>
+        <span class="tag gr" style="font-size:8.5px">FEE: 0.1% (10 PAISE)</span>
+        <span class="tag cy" style="font-size:8.5px">TARGET: +25% FULL EXIT</span>
+        <span class="tag rd" style="font-size:8.5px">STOP-LOSS: -5%</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="tag cy" id="cdcxCash">CASH: ₹100.00</span>
+        <span class="tag gr" id="cdcxPnl">PNL: ₹0.00</span>
+      </div>
+    </div>
+    <div class="hud-b" style="padding:14px">
+      <!-- Active CoinDCX Position Banner -->
+      <div id="cdcxActiveBanner" style="display:none;background:rgba(0, 229, 255, 0.08);border:1px solid rgba(0, 229, 255, 0.3);border-radius:4px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <span style="font-size:10px;color:var(--dim);letter-spacing:.15em">ACTIVE POSITION:</span>
+          <b id="cdcxPosSym" style="color:#fff;margin-left:6px;font-size:13px">—</b>
+          <span id="cdcxPosEntry" style="color:var(--dim);font-size:10px;margin-left:8px">Entry: ₹0</span>
+          <span id="cdcxPosTarget" style="color:var(--cyan2);font-size:10px;margin-left:8px">Target (+25%): ₹0</span>
+          <span id="cdcxPosStop" style="color:var(--red);font-size:10px;margin-left:8px">Stop (-5%): ₹0</span>
+        </div>
+        <div style="font-size:14px;font-weight:700" id="cdcxPosPnl">+0.00%</div>
+      </div>
+
+      <!-- CoinDCX Live Scanner Table -->
+      <div class="tbl">
+        <table>
+          <thead>
+            <tr>
+              <th>INR MARKET</th>
+              <th>LIVE PRICE (COINDCX)</th>
+              <th>RSI(14)</th>
+              <th>ORDER BOOK IMBALANCE (OBI)</th>
+              <th>WIN PROBABILITY</th>
+              <th>DECISION</th>
+            </tr>
+          </thead>
+          <tbody id="cdcxMarketRows">
+            <tr><td colspan="6" style="text-align:center;color:var(--faint);padding:14px">📡 POLLING COINDCX LIVE ORDER BOOKS & CANDLES…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div class="tk-grid" style="margin-top:14px">
     <div class="hud grn reveal">
       <div class="hud-h"><div class="hud-t">AUTONOMY CONTROL · FULL-AUTO</div><span class="tag gr" id="autoTag">● AUTO:ON</span></div>
@@ -1424,6 +1472,60 @@ async function syncBotState() {
       $('autoBtn').textContent = isPaused ? '▶ RESUME AUTO' : '⏸ HALT AUTO';
     }
 
+    // Sync CoinDCX Paper Trader
+    if (data.coindcx) {
+      const cdcx = data.coindcx;
+      const cdcxCash = Number(cdcx.portfolio_inr !== undefined ? cdcx.portfolio_inr : 100);
+      const cdcxPnl = Number(cdcx.total_realized_pnl || 0);
+      if ($('cdcxCash')) $('cdcxCash').textContent = 'CASH: ' + inr(cdcxCash);
+      if ($('cdcxPnl')) {
+        $('cdcxPnl').textContent = 'PNL: ' + (cdcxPnl >= 0 ? '+' : '') + inr(cdcxPnl);
+        $('cdcxPnl').className = 'tag ' + (cdcxPnl >= 0 ? 'gr' : 'rd');
+      }
+
+      // Active Position Banner
+      const cdcxPos = cdcx.active_position;
+      const banner = $('cdcxActiveBanner');
+      if (banner) {
+        if (cdcxPos) {
+          banner.style.display = 'flex';
+          if ($('cdcxPosSym')) $('cdcxPosSym').textContent = cdcxPos.symbol + '/INR';
+          if ($('cdcxPosEntry')) $('cdcxPosEntry').textContent = 'Entry: ' + inr(cdcxPos.entry_price);
+          if ($('cdcxPosTarget')) $('cdcxPosTarget').textContent = 'Target (+25%): ' + inr(cdcxPos.target_price);
+          if ($('cdcxPosStop')) $('cdcxPosStop').textContent = 'Stop (-5%): ' + inr(cdcxPos.stop_loss_price);
+          const pPnl = Number(cdcxPos.current_pnl_pct || 0);
+          if ($('cdcxPosPnl')) {
+            $('cdcxPosPnl').textContent = (pPnl >= 0 ? '+' : '') + pPnl.toFixed(2) + '%';
+            $('cdcxPosPnl').style.color = pPnl >= 0 ? 'var(--green)' : 'var(--red)';
+          }
+        } else {
+          banner.style.display = 'none';
+        }
+      }
+
+      // Scanner Table
+      const scans = cdcx.last_scan_results || [];
+      const tb = $('cdcxMarketRows');
+      if (tb && scans.length > 0) {
+        tb.innerHTML = scans.map(s => {
+          const wp = (Number(s.win_probability || 0) * 100).toFixed(1);
+          const isBuy = s.signal === 'BUY';
+          const rsi = Number(s.rsi || 50).toFixed(1);
+          const obi = Number(s.obi || 0).toFixed(2);
+          const obiColor = obi > 0 ? 'color:var(--green)' : (obi < 0 ? 'color:var(--red)' : 'color:var(--dim)');
+          const sigClass = isBuy ? 'tag gr' : 'tag cy';
+          return `<tr>
+            <td><b style="color:#fff">${escapeHtml(s.symbol)}/INR</b></td>
+            <td>${inr(s.current_price)}</td>
+            <td>${rsi}</td>
+            <td style="${obiColor}">${obi > 0 ? '+' : ''}${obi} (${s.bid_ask_ratio}x)</td>
+            <td><b style="color:${wp >= 75 ? 'var(--green)' : 'var(--cyan2)'}">${wp}%</b></td>
+            <td><span class="${sigClass}">${s.signal}</span></td>
+          </tr>`;
+        }).join('');
+      }
+    }
+
   } catch (err) {
     console.error("Bot state sync error:", err);
   }
@@ -2236,6 +2338,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "reason": "Calibrated against 10,000 Monte Carlo trials accounting for Solana AMM fees (0.6%) and slippage."
                     }
                 ]
+            # Attach live CoinDCX Paper Trading state
+            cdcx_file = os.path.join(os.path.dirname(__file__), "coindcx_state.json")
+            if os.path.exists(cdcx_file):
+                try:
+                    with open(cdcx_file, "r", encoding="utf-8") as f:
+                        state["coindcx"] = json.load(f)
+                except Exception:
+                    state["coindcx"] = {"portfolio_inr": 100.0, "active_position": None, "last_scan_results": []}
+            else:
+                state["coindcx"] = {"portfolio_inr": 100.0, "active_position": None, "last_scan_results": []}
 
             self.wfile.write(json.dumps(state).encode("utf-8"))
         elif self.path == "/api/coindcx_state":

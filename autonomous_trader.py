@@ -1759,8 +1759,23 @@ async def run_autonomous_simulation_loop():
     # Launch Cloud Keep-Alive Self-Pinger
     asyncio.create_task(keep_alive_pinger())
 
+    # Launch Autonomous CoinDCX Paper Trader (Scans every 60s)
+    from coindcx_paper_trader import CoinDCXPaperTrader
+    coindcx_trader = CoinDCXPaperTrader(initial_capital=100.0, entry_threshold=0.75)
+
+    async def run_coindcx_loop():
+        print("🇮🇳 [COINDCX RUNNER] Autonomous CoinDCX Paper Trader online!")
+        while True:
+            try:
+                await coindcx_trader.run_cycle()
+            except Exception as e:
+                print(f"⚠️ [COINDCX LOOP ERROR] {e}")
+            await asyncio.sleep(60)
+
+    asyncio.create_task(run_coindcx_loop())
+
     print(f"🚀 CryptoGen Cloud Worker started. Web Dashboard live on port {dashboard_port}!")
-    await send_telegram_alert(f"🚀 *[BOT ONLINE]* CryptoGen 24/7 Cloud Incubation started!\n• Mode: Virtual Paper Trading\n• Starting Balance: INR 100.00\n• Web Dashboard: Live on port {dashboard_port}")
+    await send_telegram_alert(f"🚀 *[BOT ONLINE]* CryptoGen 24/7 Cloud Incubation started!\n• Mode: Virtual Paper Trading (Solana + CoinDCX)\n• Starting Balance: INR 100.00\n• Web Dashboard: Live on port {dashboard_port}")
 
     cycle_count = 0
     last_hourly_digest = time.time()
